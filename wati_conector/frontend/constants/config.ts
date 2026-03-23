@@ -2,7 +2,7 @@
 
 export const AIRTABLE_CONFIG = {
     API_URL: 'https://api.airtable.com/v0',
-    TOKEN: "TU_TOKEN_AQUI",
+    TOKEN: '',
     BASE_ID: 'appbBxfX1DQto8MxR',
 } as const;
 
