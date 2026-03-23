@@ -4,6 +4,7 @@ import { getDocumentIcon, formatFileSize } from '../../utils/fileUtils';
 import { FILE_UPLOAD } from '../../constants/config';
 import { getMediaType, isImage, isDocument } from '../../types/models';
 import { PYTHON_API } from '../../constants/config';
+import { VoiceNotePlayer } from './VoiceNotePlayer';
 
 interface AttachmentPreviewProps {
     attachment: Attachment;
@@ -172,8 +173,15 @@ export function AttachmentPreview({ attachment, maxWidth = 300, onPreview }: Att
         );
     }
 
-    // ─── Video/Audio Preview ───────────────────────────────────
-    if (mediaType === 'video' || mediaType === 'audio') {
+    // ─── Audio / Voice Note Preview (inline player) ─────────────
+    if (mediaType === 'audio') {
+        return (
+            <VoiceNotePlayer url={getCorrectUrl()} isVoice={attachment.isVoice} />
+        );
+    }
+
+    // ─── Video Preview ───────────────────────────────────────────
+    if (mediaType === 'video') {
         return (
             <div 
                 className="mt-2 flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-100 transition-colors"
@@ -184,23 +192,9 @@ export function AttachmentPreview({ attachment, maxWidth = 300, onPreview }: Att
                 }}
             >
                 <div className="flex-shrink-0">
-                    {mediaType === 'video' ? (
-                        <svg className="w-8 h-8 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                    ) : (
-                        attachment.isVoice ? (
-                            // Voice note icon - microphone
-                            <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                            </svg>
-                        ) : (
-                            // Regular audio icon - music note
-                            <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-                            </svg>
-                        )
-                    )}
+                    <svg className="w-8 h-8 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
                 </div>
                 <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-gray-800 truncate">

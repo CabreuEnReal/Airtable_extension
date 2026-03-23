@@ -108,9 +108,6 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
 
     const handleVoiceSend = async (blob: Blob) => {
         try {
-            // Logs visibles en UI para debugging
-            alert(`🎤 INICIO VOICE NOTE:\nTipo: ${blob.type}\nTamaño: ${blob.size}\nMimeType: ${(blob as any).detectedMimeType || blob.type}`);
-            
             console.log('🎤 === INICIO PROCESO VOICE NOTE ===');
             console.log('📦 Blob original:', {
                 type: blob.type,
@@ -150,7 +147,7 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
     };
 
     return (
-        <div className="relative border-t border-gray-100 bg-white">
+        <div className="relative bg-white border-t border-gray-100 p-4 pt-2">
             {/* Template selector popup */}
             {showTemplates && (
                 <TemplateSelector
@@ -163,13 +160,13 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
 
             {/* Emoji Selector */}
             {showEmojis && (
-                <div className="absolute bottom-full left-4 mb-2 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-10">
-                    <div className="grid grid-cols-8 gap-1">
-                        {['😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '😟', '🙁', '☹️', '😮', '😯', '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😱', '😨', '😰', '😱', '🥵', '🥶', '😱', '🤯', '😳', '🥺', '😭', '😤', '😠', '😡', '🤬', '🤮', '🤢', '🤧', '😇', '🥳', '😈', '👿', '💀', '☠️', '💩', '🤡', '👹', '👺', '👻', '👽', '👾', '🤖', '💋', '💌', '💘', '💝', '💖', '💗', '💓', '💞', '💕', '❣️', '💔', '❤️', '🧡', '💛', '💚', '💙', '💜', '🤎', '🖤', '🤍', '💯', '💢', '💥', '💫', '💦', '💨', '🕳️', '💣', '💬', '👁️‍🗨️', '🗨️', '🗯️', '💭', '💤'].map((emoji) => (
+                <div className="absolute bottom-full left-4 mb-2 bg-white border border-gray-200 rounded-xl shadow-xl p-3 z-10">
+                    <div className="grid grid-cols-8 gap-1 max-h-48 overflow-y-auto">
+                        {['😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '😟', '🙁', '☹️', '😮', '😯', '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😱', '', '😤', '😠', '😡', '🤬', '', '👿', '💀', '☠️', '💩', '🤡', '👹', '👺', '👻', '👽', '👾', '🤖', '💋', '💌', '💘', '💝', '💖', '💗', '💓', '💞', '💕', '❣️', '💔', '❤️', '🧡', '💛', '💚', '💙', '💜', '🤎', '🖤', '🤍', '💯', '💢', '💥', '💫', '💦', '💨', '�', '�', '�️', '�️', '�', '�', '�', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙', '�', '�'].map((emoji) => (
                             <button
                                 key={emoji}
                                 onClick={() => handleEmojiSelect(emoji)}
-                                className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded text-lg"
+                                className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-lg transition-colors"
                                 title={emoji}
                             >
                                 {emoji}
@@ -179,74 +176,9 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
                 </div>
             )}
 
-            <div className="flex items-center gap-2 px-4 py-3">
-            {/* Action buttons */}
-            <button 
-                className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${showEmojis ? 'bg-primary-light text-primary' : 'hover:bg-gray-75 text-gray-400'}`}
-                title="Emoji"
-                onClick={() => setShowEmojis(!showEmojis)}
-            >
-                😊
-            </button>
-            <button
-                className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${showTemplates ? 'bg-primary-light text-primary' : 'hover:bg-gray-75 text-gray-400'}`}
-                title="Plantillas"
-                onClick={() => setShowTemplates(!showTemplates)}
-            >
-                📋
-            </button>
-
-            {/* Voice recorder button */}
-            <button
-                onClick={() => setShowVoiceRecorder(!showVoiceRecorder)}
-                disabled={sending || disabled}
-                className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                title="Grabar nota de voz"
-            >
-                <svg className="w-5 h-5 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
-                </svg>
-            </button>
-
-            {/* Input */}
-            <input
-                type="text"
-                value={draft}
-                onChange={handleInputChange}
-                placeholder="Escribe un mensaje o / para buscar plantillas..."
-                className="flex-1 px-3 py-2 border border-gray-200 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                disabled={disabled || showVoiceRecorder}
-                onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSend();
-                    }
-                }}
-            />
-
-            {/* File upload button */}
-            <FileUploadButton 
-                onFileSelect={handleFileSelect} 
-                disabled={sending || disabled}
-            />
-
-            {/* Send button */}
-            <button
-                onClick={handleSend}
-                disabled={!draft.trim() || sending || disabled}
-                className="w-10 h-10 flex items-center justify-center rounded-full bg-primary text-white hover:bg-primary-dark disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-                {sending ? (
-                    <span className="animate-spin text-sm">◌</span>
-                ) : (
-                    <span className="text-lg">➤</span>
-                )}
-            </button>
-            </div>
-            
             {/* Command Suggestions */}
             {showCommandSuggestions && (
-                <div className="relative">
+                <div className="relative mb-2">
                     <CommandSuggestions
                         templates={templates}
                         query={commandQuery}
@@ -260,13 +192,89 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
 
             {/* Voice Recorder */}
             {showVoiceRecorder && (
-                <div className="mt-2">
+                <div className="mb-3">
                     <VoiceRecorder 
                         onSend={handleVoiceSend}
                         disabled={sending || disabled}
                     />
                 </div>
             )}
+
+            {/* Input Toolbar */}
+            <div className="flex items-end gap-3 bg-[#f8f9fb] rounded-[24px] px-4 py-2 border border-gray-100 focus-within:border-[#00811A]/30 focus-within:bg-white transition-all shadow-sm">
+                <div className="flex items-center gap-1 mb-1">
+                    {/* Emoji button */}
+                    <button 
+                        className={`p-2 rounded-full transition-all active:scale-95 ${showEmojis ? 'bg-[#00811A]/10 text-[#00811A]' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-200/50'}`}
+                        title="Emoji"
+                        onClick={() => setShowEmojis(!showEmojis)}
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                    </button>
+                    {/* Templates button */}
+                    <button
+                        className={`p-2 rounded-full transition-all active:scale-95 ${showTemplates ? 'bg-[#00811A]/10 text-[#00811A]' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-200/50'}`}
+                        title="Plantillas"
+                        onClick={() => setShowTemplates(!showTemplates)}
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                    </button>
+                    {/* File upload button */}
+                    <FileUploadButton 
+                        onFileSelect={handleFileSelect} 
+                        disabled={sending || disabled}
+                    />
+                    {/* Voice recorder button */}
+                    <button
+                        onClick={() => setShowVoiceRecorder(!showVoiceRecorder)}
+                        disabled={sending || disabled}
+                        className={`p-2 rounded-full transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${showVoiceRecorder ? 'bg-red-50 text-red-500' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-200/50'}`}
+                        title="Grabar nota de voz"
+                    >
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+                        </svg>
+                    </button>
+                </div>
+
+                {/* Text input */}
+                <input
+                    type="text"
+                    value={draft}
+                    onChange={handleInputChange}
+                    placeholder="Escribe un mensaje o / para plantillas..."
+                    className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-[14px] text-gray-700 placeholder-gray-400 py-2.5"
+                    disabled={disabled || showVoiceRecorder}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSend();
+                        }
+                    }}
+                />
+
+                {/* Send button */}
+                <button
+                    onClick={handleSend}
+                    disabled={!draft.trim() || sending || disabled}
+                    className="mb-1 w-10 h-10 flex items-center justify-center rounded-full bg-[#00811A] text-white hover:bg-[#006615] shadow-md shadow-green-900/10 active:scale-90 transition-all disabled:bg-gray-200 disabled:shadow-none disabled:text-gray-400"
+                >
+                    {sending ? (
+                        <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    ) : (
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                        </svg>
+                    )}
+                </button>
+            </div>
         </div>
     );
 }

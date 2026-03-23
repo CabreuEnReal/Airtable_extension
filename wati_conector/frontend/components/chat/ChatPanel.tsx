@@ -88,11 +88,18 @@ export function ChatPanel({
     return (
         <div className="flex-1 flex flex-col overflow-hidden bg-white">
             {/* Header */}
-            <div className="flex items-center px-4 py-3 border-b border-gray-100 bg-white gap-3">
-                <Avatar name={contact.displayName} size="md" online />
-                <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-gray-800 truncate">{contact.displayName}</div>
-                    <div className="text-label text-primary">● En línea</div>
+            <header className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-100 shadow-sm z-10">
+                <div className="flex items-center gap-3">
+                    <div className="relative">
+                        <Avatar name={contact.displayName} size="md" />
+                        <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                        <h2 className="text-sm font-bold text-gray-900 truncate leading-tight">
+                            {contact.displayName}
+                        </h2>
+                        <span className="text-[11px] font-medium text-[#00811A]">● En línea</span>
+                    </div>
                 </div>
                 <div className="flex items-center gap-1">
                     <IconButton icon="🔍" label="Buscar" size="sm" />
@@ -100,14 +107,14 @@ export function ChatPanel({
                     {onOpenDetail && <IconButton icon="ℹ️" label="Detalle" size="sm" onClick={onOpenDetail} />}
                     <IconButton icon="⋮" label="Más" size="sm" />
                 </div>
-            </div>
+            </header>
 
             {/* Messages area */}
-            <div className="flex-1 overflow-y-auto px-4 py-3 bg-surface-light">
+            <div className="flex-1 overflow-y-auto px-6 py-4 bg-[#f9fafb] bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:20px_20px]">
                 {dateGroups.map((group) => (
                     <div key={group.label}>
-                        <div className="flex justify-center my-3">
-                            <span className="bg-white text-label text-gray-400 px-3 py-1 rounded-full shadow-xs">
+                        <div className="flex justify-center my-4">
+                            <span className="bg-white/90 backdrop-blur-sm text-[11px] font-medium text-gray-500 px-4 py-1.5 rounded-full shadow-sm border border-gray-100">
                                 {group.label}
                             </span>
                         </div>
