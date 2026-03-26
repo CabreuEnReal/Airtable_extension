@@ -6,11 +6,13 @@ import './style.css';
 import type { Contact, Message, Template, Notification as AppNotification } from './types/models';
 import { POLLING } from './constants/config';
 import { detectBaseId, getAllContacts } from './services/airtable';
+import { adaptContacts, adaptApiContacts } from './adapters/contactAdapter';
 import {
     getDynamicApiConfig,
     getApiMessages, 
     getApiTemplates, 
     getApiContacts, 
+    getApiContactsStatus,
     createApiContact, 
     checkHealth, 
     sendApiMessage, 
@@ -76,6 +78,7 @@ function SalesCRM() {
     const [showNotesModal, setShowNotesModal] = useState(false);
     const [debugLogs, setDebugLogs] = useState<string[]>([]);
     const [debugMinimized, setDebugMinimized] = useState(false);
+    const [lastContactsUpdate, setLastContactsUpdate] = useState<string | null>(null);
     const [pendingDraft, setPendingDraft] = useState<string | null>(null);
     const [apiConfigLoaded, setApiConfigLoaded] = useState(false);
 
@@ -118,20 +121,50 @@ function SalesCRM() {
         return map;
     }, [contacts]);
 
-    // ─── Data Loading (hybrid: Airtable contacts + Python API messages/templates)
-    const loadData = useCallback(async (priority: 'high' | 'normal' = 'normal') => {
+    // ─── Smart Polling: Check contacts status and load only when changed ───────────────────────────────────────
+    const checkContactsStatus = useCallback(async () => {
+        try {
+            const status = await getApiContactsStatus();
+            const hasChanges = !lastContactsUpdate || 
+                              status.count !== contacts.length || 
+                              status.last_updated !== lastContactsUpdate;
+            
+            if (hasChanges) {
+                setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: Contacts changed (${status.count}), reloading...`]);
+                
+                // Load fresh contacts from backend
+                const apiContacts = await getApiContacts();
+                const adaptedContacts = adaptApiContacts(apiContacts);
+                setContacts(adaptedContacts);
+                setLastContactsUpdate(status.last_updated);
+                
+                const leadCount = adaptedContacts.filter((c: Contact) => c.contactType === 'lead').length;
+                const contactCount = adaptedContacts.filter((c: Contact) => c.contactType === 'contact').length;
+                setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: Reloaded ${leadCount} leads + ${contactCount} contacts from API`]);
+            }
+        } catch (err: any) {
+            setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: ⚠ Status check failed: ${(err as Error).message}`]);
+        }
+    }, [lastContactsUpdate, contacts.length]);
+
+    // ─── Data Loading (initial load only) ───────────────────────────────────────
+    const loadInitialData = useCallback(async () => {
         const startTime = performance.now();
         
         try {
-            // Load Leads + CRM Contacts from Sales CRM (merged, owner names resolved)
-            const contactsPromise = getAllContacts();
-            const [c] = await Promise.all([contactsPromise]);
-            setContacts(c);
+            // Load contacts from backend (new unified approach)
+            const apiContacts = await getApiContacts();
+            const adaptedContacts = adaptApiContacts(apiContacts);
+            setContacts(adaptedContacts);
             
-            const leadCount = c.filter((x: Contact) => x.contactType === 'lead').length;
-            const contactCount = c.filter((x: Contact) => x.contactType === 'contact').length;
+            // Get initial status
+            const status = await getApiContactsStatus();
+            setLastContactsUpdate(status.last_updated);
+            
+            const leadCount = adaptedContacts.filter((c: Contact) => c.contactType === 'lead').length;
+            const contactCount = adaptedContacts.filter((c: Contact) => c.contactType === 'contact').length;
             const criticalTime = performance.now() - startTime;
-            setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: Sales CRM loaded in ${criticalTime.toFixed(0)}ms: ${leadCount} leads + ${contactCount} contacts`]);
+            setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: API loaded in ${criticalTime.toFixed(0)}ms: ${leadCount} leads + ${contactCount} contacts`]);
             
             // Try Python API - start with messages as the primary test
             try {
@@ -161,11 +194,6 @@ function SalesCRM() {
                     setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: Loaded ${metaTemplates.length} meta tpl, ${airtableTemplates.length} airtable tpl`]);
                 });
                 
-                // Sync contacts in background
-                if (c.length > 0) {
-                    setTimeout(() => syncContactsToPython(c), 100);
-                }
-                
             } catch (err: any) {
                 // Messages failed - API is offline
                 setApiOnline(false);
@@ -175,52 +203,47 @@ function SalesCRM() {
             }
             
         } catch (err: any) {
-            setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: ERROR loadData: ${err.message}`]);
+            setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: ERROR loadInitialData: ${err.message}`]);
             setApiOnline(false);
         } finally {
             setLoading(false);
         }
     }, []); // Remove addLog dependency to prevent infinite re-renders
 
-    // ─── Sync Airtable contacts to Python API ───────────────
-    const syncContactsToPython = useCallback(async (airtableContacts: Contact[]) => {
-        try {
-            const apiContacts = await getApiContacts();
+    // ─── Sync Airtable contacts to Python API (DEPRECATED) ───────────────
+    // No longer needed - backend handles automatic sync every 15 minutes
 
-            const existingPhones = new Set(apiContacts.map((c) => normalizePhone(c.phone_number)));
-
-            for (const contact of airtableContacts) {
-                if (!contact.phone) continue;
-                const norm = normalizePhone(contact.phone);
-                if (existingPhones.has(norm)) continue;
-                try {
-                    await createApiContact(norm, contact.displayName);
-                    setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: Synced contact → API: ${contact.displayName} (${norm})`]);
-                } catch (err: any) {
-                    setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: WARN syncContact: ${err.message}`]);
-                }
-            }
-        } catch (err: any) {
-            setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: WARN syncContacts: ${err.message}`]);
-        }
-    }, []); // Remove addLog dependency
-
-    // ─── Initial load + polling ─────────────────────────────
+    // ─── Initial load + smart polling ─────────────────────────────
     useEffect(() => {
         // Initialize API configuration first
         const initialize = async () => {
             await initializeApiConfig();
             
             // Start data loading after config is ready
-            loadData('high');
+            loadInitialData();
             
-            // Normal priority polling for updates
-            const interval = setInterval(() => loadData('normal'), POLLING.DATA_ACTIVE);
-            return () => clearInterval(interval);
+            // Smart polling: check contacts status every 15s, messages every 30s
+            const contactsInterval = setInterval(checkContactsStatus, 15000);
+            const messagesInterval = setInterval(() => {
+                // Only load messages if API is online
+                if (apiOnline) {
+                    getApiMessages().then(rawMsgs => {
+                        setMessages(adaptMessages(rawMsgs));
+                    }).catch(() => {
+                        setApiOnline(false);
+                        setMessages([]);
+                    });
+                }
+            }, POLLING.DATA_ACTIVE);
+            
+            return () => {
+                clearInterval(contactsInterval);
+                clearInterval(messagesInterval);
+            };
         };
 
         initialize();
-    }, [loadData, initializeApiConfig]); // Add dependencies
+    }, [loadInitialData, checkContactsStatus, initializeApiConfig, apiOnline]); // Add dependencies
 
     // ─── Match messages to Airtable contacts by phone ───────
     const messagesWithAirtableIds = useMemo(() => {

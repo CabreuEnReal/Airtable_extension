@@ -1,6 +1,6 @@
 import { PYTHON_API, setApiConfig } from '../constants/config';
 import type {
-    ApiContactOut, ApiMessageOut, ApiTemplateOut, ApiPhoneNumber,
+    ApiContactOut, ApiContactsStatus, ApiMessageOut, ApiTemplateOut, ApiPhoneNumber,
     ApiSendMessageRequest,
     ApiSendMessageResponse,
     ApiAirtableTemplateOut,
@@ -179,6 +179,10 @@ export async function checkHealth(): Promise<boolean> {
 }
 
 // ─── Contacts ───────────────────────────────────────────────────────────────
+
+export async function getApiContactsStatus(): Promise<ApiContactsStatus> {
+    return apiFetch<ApiContactsStatus>('/api/v1/contacts/status');
+}
 
 export async function getApiContacts(): Promise<ApiContactOut[]> {
     return apiFetch<ApiContactOut[]>('/api/v1/contacts');

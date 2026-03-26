@@ -4,7 +4,17 @@ export interface ApiContactOut {
     id: number;
     phone_number: string;
     name: string;
+    email?: string;
+    source: string;
+    stage: string;
+    owner_name?: string;
+    airtable_record_id: string;
     created_at: string;
+}
+
+export interface ApiContactsStatus {
+    count: number;
+    last_updated: string;
 }
 
 export interface ApiMessageOut {

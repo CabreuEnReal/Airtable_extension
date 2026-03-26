@@ -3,7 +3,7 @@
 export const AIRTABLE_CONFIG = {
     API_URL: 'https://api.airtable.com/v0',
     TOKEN: '',
-    BASE_ID: 'appbBxfX1DQto8MxR',
+    BASE_ID: 'apppzMiKVvd1F3gll', // ← Sales CRM (producción)
 } as const;
 
 // Dynamic API configuration - will be set at runtime

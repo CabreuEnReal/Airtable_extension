@@ -1,5 +1,6 @@
 import type { Contact, Lead, Interaction } from '../types/models';
 import type { AirtableRecord } from '../types/airtable';
+import type { ApiContactOut } from '../types/api';
 import { LEAD_FIELDS, CONTACT_FIELDS, INTERACTION_FIELDS } from '../types/airtable';
 
 // ─── Lead Record → Contact UI Model (primary for conversations) ─────────────
@@ -148,4 +149,38 @@ function parseMultiSelect(val: unknown): string[] {
     }
     if (typeof val === 'string') return val.split(',').map((s) => s.trim());
     return [];
+}
+
+// ─── API Contact → Contact UI Model ───────────────────────────────────────
+
+export function adaptApiContact(apiContact: ApiContactOut): Contact {
+    const nameParts = apiContact.name.split(' ');
+    const firstName = nameParts[0] || '';
+    const lastName = nameParts.slice(1).join(' ') || '';
+    
+    // Determine contact type based on source field
+    const contactType = apiContact.source === 'lead' ? 'lead' : 'contact';
+    
+    return {
+        id: apiContact.airtable_record_id, // Use airtable_record_id as UI id
+        displayName: apiContact.name || 'Sin nombre',
+        firstName,
+        lastName,
+        email: apiContact.email || '',
+        phone: apiContact.phone_number || '',
+        company: '',
+        jobTitle: '',
+        department: '',
+        stage: apiContact.stage || '',
+        leadCode: '',
+        leadSource: apiContact.source || '',
+        industry: '',
+        ownerId: '',
+        ownerName: apiContact.owner_name || '',
+        contactType,
+    };
+}
+
+export function adaptApiContacts(apiContacts: ApiContactOut[]): Contact[] {
+    return apiContacts.map(adaptApiContact);
 }

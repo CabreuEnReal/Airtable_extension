@@ -44,17 +44,24 @@ export function AttachmentPreview({ attachment, maxWidth = 300, onPreview }: Att
         return finalUrl;
     };
 
-    const handleDownload = async (e?: React.MouseEvent) => {
+    const handleDownload = async (e: React.MouseEvent) => {
         if (downloading) return;
         
-        e?.stopPropagation();
+        // Prevent event propagation to parent (preview modal)
+        e.stopPropagation();
+        e.preventDefault();
+        
         setDownloading(true);
         
         try {
             const url = getCorrectUrl();
-            const response = await fetch(url, {
-                headers: { 'ngrok-skip-browser-warning': 'true' },
-            });
+            console.log('Download starting:', { url, name: attachment.name });
+            
+            // Determine if we need ngrok headers (only for ngrok URLs)
+            const isNgrokUrl = url.includes('ngrok-free.dev');
+            const headers: Record<string, string> = isNgrokUrl ? { 'ngrok-skip-browser-warning': 'true' } : {};
+            
+            const response = await fetch(url, { headers });
             if (!response.ok) throw new Error('Download failed');
             
             const blob = await response.blob();
