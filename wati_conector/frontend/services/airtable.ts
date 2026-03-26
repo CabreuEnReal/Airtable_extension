@@ -1,8 +1,8 @@
 import { AIRTABLE_CONFIG } from '../constants/config';
-import { TABLES } from '../types/airtable';
+import { TABLES, PEOPLE_FIELDS, LEAD_FIELDS } from '../types/airtable';
 import type { AirtableRecord, AirtableListResponse } from '../types/airtable';
-import type { Contact } from '../types/models';
-import { adaptContacts } from '../adapters/contactAdapter';
+import type { Contact, Lead, Interaction } from '../types/models';
+import { adaptLeadsToContacts, adaptContacts, adaptLeads, adaptInteractions } from '../adapters/contactAdapter';
 
 // ─── Mutable baseId (detected from URL at runtime) ─────────────────────────
 
@@ -40,9 +40,70 @@ async function paginatedList(tableName: string, params: Record<string, string> =
     return allRecords;
 }
 
-// ─── Contacts (from Airtable) ───────────────────────────────────────────────
+// ─── People lookup (Owner name resolution) ──────────────────────────────────
+
+let peopleCache: Map<string, string> = new Map();
+
+async function loadPeopleCache(): Promise<Map<string, string>> {
+    if (peopleCache.size > 0) return peopleCache;
+    const records = await paginatedList(TABLES.PEOPLE);
+    const map = new Map<string, string>();
+    for (const r of records) {
+        map.set(r.id, r.fields[PEOPLE_FIELDS.FULL_NAME] ?? '');
+    }
+    peopleCache = map;
+    return map;
+}
+
+// ─── All contacts (Leads + CRM Contacts merged, owner names resolved) ───────
+
+export async function getAllContacts(): Promise<Contact[]> {
+    const [leadRecords, contactRecords, people] = await Promise.all([
+        paginatedList(TABLES.LEADS, { filterByFormula: `{${LEAD_FIELDS.STAGE}} != 'No viable'` }),
+        paginatedList(TABLES.CONTACTS),
+        loadPeopleCache(),
+    ]);
+
+    const leads = adaptLeadsToContacts(leadRecords);
+    const contacts = adaptContacts(contactRecords);
+
+    // Resolve owner names
+    const allContacts = [...leads, ...contacts];
+    for (const c of allContacts) {
+        if (c.ownerId && people.has(c.ownerId)) {
+            c.ownerName = people.get(c.ownerId) ?? '';
+        }
+    }
+
+    return allContacts;
+}
+
+// ─── Leads → Contact model (filtered, no "No viable") ──────────────────────
+
+export async function getLeadsAsContacts(): Promise<Contact[]> {
+    const records = await paginatedList(TABLES.LEADS, {
+        filterByFormula: `{${LEAD_FIELDS.STAGE}} != 'No viable'`,
+    });
+    return adaptLeadsToContacts(records);
+}
+
+// ─── Leads (raw model) ─────────────────────────────────────────────────────
+
+export async function getLeads(): Promise<Lead[]> {
+    const records = await paginatedList(TABLES.LEADS);
+    return adaptLeads(records);
+}
+
+// ─── CRM Contacts ───────────────────────────────────────────────────────────
 
 export async function getContacts(): Promise<Contact[]> {
     const records = await paginatedList(TABLES.CONTACTS);
     return adaptContacts(records);
+}
+
+// ─── Interactions ───────────────────────────────────────────────────────────
+
+export async function getInteractions(): Promise<Interaction[]> {
+    const records = await paginatedList(TABLES.INTERACTIONS);
+    return adaptInteractions(records);
 }

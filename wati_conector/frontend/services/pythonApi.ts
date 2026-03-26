@@ -216,6 +216,16 @@ export async function sendApiMessage(toNumber: string, textContent: string): Pro
     });
 }
 
+export async function markMessageAsRead(messageId: number): Promise<ApiMessageOut> {
+    return apiFetch<ApiMessageOut>(`/api/v1/messages/${messageId}/read`, {
+        method: 'PUT',
+    });
+}
+
+export async function markMessagesAsRead(messageIds: number[]): Promise<void> {
+    await Promise.all(messageIds.map((id) => markMessageAsRead(id)));
+}
+
 // ─── Templates (Unified) ───────────────────────────────────────────────────────
 
 export async function getApiTemplates(): Promise<ApiTemplateOut[]> {

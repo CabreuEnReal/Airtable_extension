@@ -14,6 +14,7 @@ function mapStatus(raw: string): MessageStatus {
 }
 
 function deriveDirection(raw: ApiMessageOut): MessageDirection {
+    if (raw.direction) return raw.direction as MessageDirection;
     return raw.status === 'received' ? 'inbound' : 'outbound';
 }
 
@@ -88,7 +89,7 @@ export function adaptMessage(raw: ApiMessageOut): Message {
         direction: deriveDirection(raw),
         timestamp: raw.created_at ?? '',
         status: mapStatus(raw.status),
-        readStatus: 'read',
+        readStatus: raw.read_status === 'unread' ? 'unread' : 'read',
         contactId: String(raw.contact_id),
         contactPhone: raw.from_number ?? '',
         fromNumber: raw.from_number ?? '',

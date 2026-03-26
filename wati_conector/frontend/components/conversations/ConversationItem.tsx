@@ -39,7 +39,14 @@ export function ConversationItem({ conversation, isSelected, onClick }: Conversa
                     : 'hover:bg-gray-25'
                 }`}
         >
-            <Avatar name={contact.displayName} size="md" />
+            <div className="relative">
+                <Avatar name={contact.displayName} size="md" />
+                {!contact.phone && (
+                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold">
+                        !
+                    </div>
+                )}
+            </div>
 
             <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { Message } from '../../types/models';
 import { formatTime } from '../../utils/formatters';
 import { AttachmentPreview } from './AttachmentPreview';
@@ -36,8 +36,40 @@ function formatDisplayText(text: string): { display: string; isTemplate: boolean
 export function MessageBubble({ message, contactName, onRetryMedia }: MessageBubbleProps) {
     const [retrying, setRetrying] = useState(false);
     const [previewModal, setPreviewModal] = useState<{ url: string; name: string; type: string } | null>(null);
+    const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+    const [pdfLoading, setPdfLoading] = useState(false);
     const isOut = message.direction === 'outbound';
     const { display, isTemplate } = formatDisplayText(message.text || '');
+
+    // Load PDF as blob when preview modal opens (iframe can't send custom headers)
+    useEffect(() => {
+        if (!previewModal || previewModal.type !== 'application/pdf') {
+            if (pdfBlobUrl) {
+                URL.revokeObjectURL(pdfBlobUrl);
+                setPdfBlobUrl(null);
+            }
+            return;
+        }
+        let cancelled = false;
+        setPdfLoading(true);
+        fetch(previewModal.url, { headers: { 'ngrok-skip-browser-warning': 'true' } })
+            .then(res => {
+                if (!res.ok) throw new Error('Failed to fetch PDF');
+                return res.blob();
+            })
+            .then(blob => {
+                if (cancelled) return;
+                const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+                setPdfBlobUrl(url);
+            })
+            .catch(() => {
+                if (!cancelled) setPdfBlobUrl(null);
+            })
+            .finally(() => {
+                if (!cancelled) setPdfLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [previewModal?.url, previewModal?.type]);
 
     const handleDownload = async (url: string, filename: string, buttonElement?: HTMLButtonElement) => {
         try {
@@ -47,18 +79,23 @@ export function MessageBubble({ message, contactName, onRetryMedia }: MessageBub
                 buttonElement.textContent = '⬇ Descargando...';
             }
 
-            // Fetch the file
-            const response = await fetch(url);
+            // Fetch the file with ngrok headers
+            const response = await fetch(url, {
+                headers: { 'ngrok-skip-browser-warning': 'true' },
+            });
             if (!response.ok) throw new Error('Failed to download file');
             
             // Get blob and create download link
             const blob = await response.blob();
             const downloadUrl = window.URL.createObjectURL(blob);
             
+            // Decode filename (remove %20 etc.)
+            const decodedFilename = decodeURIComponent(filename);
+            
             // Create temporary link and trigger download
             const a = document.createElement('a');
             a.href = downloadUrl;
-            a.download = filename;
+            a.download = decodedFilename;
             document.body.appendChild(a);
             a.click();
             
@@ -192,7 +229,7 @@ export function MessageBubble({ message, contactName, onRetryMedia }: MessageBub
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div className="flex items-center justify-between p-3 border-b">
-                        <h3 className="text-sm font-semibold truncate flex-1 mr-2">{previewModal.name}</h3>
+                        <h3 className="text-sm font-semibold truncate flex-1 mr-2">{decodeURIComponent(previewModal.name)}</h3>
                         <div className="flex items-center gap-2 flex-shrink-0">
                             <button
                                 onClick={(e) => handleDownload(previewModal.url, previewModal.name, e.currentTarget)}
@@ -217,11 +254,33 @@ export function MessageBubble({ message, contactName, onRetryMedia }: MessageBub
                                 className="max-w-full h-auto mx-auto"
                             />
                         ) : previewModal.type === 'application/pdf' ? (
-                            <iframe
-                                src={previewModal.url}
-                                title={previewModal.name}
-                                className="w-full h-full border-0"
-                            />
+                            pdfBlobUrl ? (
+                                <iframe
+                                    src={pdfBlobUrl}
+                                    title={decodeURIComponent(previewModal.name)}
+                                    className="w-full h-full border-0"
+                                />
+                            ) : pdfLoading ? (
+                                <div className="flex items-center justify-center h-full">
+                                    <div className="text-center">
+                                        <div className="animate-spin text-4xl mb-3">⏳</div>
+                                        <p className="text-gray-500">Cargando PDF...</p>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex items-center justify-center h-full">
+                                    <div className="text-center">
+                                        <div className="text-4xl mb-3">📄</div>
+                                        <p className="text-gray-500 mb-3">No se pudo cargar el PDF</p>
+                                        <button
+                                            onClick={() => handleDownload(previewModal.url, previewModal.name)}
+                                            className="px-4 py-2 bg-primary text-white text-sm rounded hover:bg-primary/90"
+                                        >
+                                            ⬇ Descargar archivo
+                                        </button>
+                                    </div>
+                                </div>
+                            )
                         ) : previewModal.type.startsWith('video/') ? (
                             <video 
                                 src={previewModal.url} 

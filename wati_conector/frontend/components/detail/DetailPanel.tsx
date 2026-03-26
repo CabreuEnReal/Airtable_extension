@@ -54,6 +54,9 @@ export function DetailPanel({
             <div className="flex flex-col items-center px-4 pt-2 pb-4">
                 <Avatar name={contact.displayName} size="xl" />
                 <h3 className="text-card-heading font-semibold text-gray-800 mt-3 text-center">{contact.displayName}</h3>
+                {contact.company && (
+                    <span className="text-label text-gray-500 mt-0.5">{contact.company}</span>
+                )}
                 {contact.leadCode && (
                     <span className="text-label text-gray-400 mt-0.5">{contact.leadCode}</span>
                 )}
@@ -71,37 +74,26 @@ export function DetailPanel({
                 <h4 className="text-table-header text-gray-500 mb-2">INFORMACIÓN DE CONTACTO</h4>
                 <InfoRow label="Teléfono" value={formatPhone(contact.phone)} />
                 <InfoRow label="Email" value={contact.email} isLink />
-                <InfoRow label="Lead ID" value={contact.leadId ? `#${contact.leadId}` : ''} />
-                <InfoRow label="Lead Source" value={contact.leadSource} />
+                <InfoRow label="Cargo" value={contact.jobTitle} />
+                <InfoRow label="Industria" value={contact.industry} />
             </div>
 
             {/* Sales Attributes */}
             <div className="px-4 py-3 border-t border-gray-100">
-                <h4 className="text-table-header text-gray-500 mb-2">SALES ATTRIBUTES</h4>
+                <h4 className="text-table-header text-gray-500 mb-2">SALES</h4>
                 <div className="flex justify-between py-1.5">
                     <span className="text-label text-gray-400">Stage</span>
                     {contact.stage && <Badge text={contact.stage} variant="stage" />}
                 </div>
                 <InfoRow label="Empresa" value={contact.company} />
-                {contact.businessUnit && (
+                <InfoRow label="Lead Source" value={contact.leadSource} />
+                {contact.contactType === 'lead' && (
                     <div className="flex justify-between py-1.5">
-                        <span className="text-label text-gray-400">Business Unit</span>
-                        <Badge text={contact.businessUnit} variant="tag" />
+                        <span className="text-label text-gray-400">Tipo</span>
+                        <Badge text="Lead" variant="tag" />
                     </div>
                 )}
             </div>
-
-            {/* Tags */}
-            {contact.tags.length > 0 && (
-                <div className="px-4 py-3 border-t border-gray-100">
-                    <h4 className="text-table-header text-gray-500 mb-2">TAGS</h4>
-                    <div className="flex flex-wrap gap-1.5">
-                        {contact.tags.map((tag) => (
-                            <Badge key={tag} text={tag} variant="tag" />
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {/* Notes Preview */}
             <div className="px-4 py-3 border-t border-gray-100">

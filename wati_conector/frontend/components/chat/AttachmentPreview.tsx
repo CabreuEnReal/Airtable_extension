@@ -52,7 +52,9 @@ export function AttachmentPreview({ attachment, maxWidth = 300, onPreview }: Att
         
         try {
             const url = getCorrectUrl();
-            const response = await fetch(url);
+            const response = await fetch(url, {
+                headers: { 'ngrok-skip-browser-warning': 'true' },
+            });
             if (!response.ok) throw new Error('Download failed');
             
             const blob = await response.blob();
@@ -60,7 +62,7 @@ export function AttachmentPreview({ attachment, maxWidth = 300, onPreview }: Att
             
             const a = document.createElement('a');
             a.href = downloadUrl;
-            a.download = attachment.name;
+            a.download = decodeURIComponent(attachment.name);
             document.body.appendChild(a);
             a.click();
             
@@ -140,7 +142,7 @@ export function AttachmentPreview({ attachment, maxWidth = 300, onPreview }: Att
                 </div>
                 <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-gray-800 truncate">
-                        {attachment.name}
+                        {decodeURIComponent(attachment.name)}
                     </div>
                     <div className="text-xs text-gray-500">
                         {formatFileSize(attachment.size)}

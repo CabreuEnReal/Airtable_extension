@@ -12,7 +12,7 @@ export type MessageStatus =
 
 export type ReadStatus = 'unread' | 'read';
 
-export type ConversationFilter = 'all' | 'open' | 'unread' | 'pending';
+export type ConversationFilter = 'all' | 'leads' | 'contacts' | 'open' | 'unread';
 
 export interface Contact {
     id: string;
@@ -22,16 +22,48 @@ export interface Contact {
     email: string;
     phone: string;
     company: string;
-    leadCode: string;
-    leadId: string;
-    leadSource: string;
+    jobTitle: string;
+    department: string;
     stage: string;
-    stageStatus: string;
-    lastStageStatus: string;
-    businessUnit: string;
-    requestDate: string;
-    tags: string[];
+    leadCode: string;
+    leadSource: string;
+    industry: string;
+    ownerId: string;
+    ownerName: string;
+    contactType: 'lead' | 'contact';
     avatarUrl?: string;
+}
+
+export interface Lead {
+    id: string;
+    leadId: number;
+    firstName: string;
+    lastName: string;
+    fullName: string;
+    phone: string;
+    email: string;
+    leadCode: string;
+    jobTitle: string;
+    companyName: string;
+    industry: string;
+    stage: string;
+    ownerId: string;
+    leadSource: string;
+    requestDate: string;
+    firstContactDate: string;
+    callInsights: string;
+    notViableReason: string[];
+}
+
+export interface Interaction {
+    id: string;
+    name: string;
+    type: string[];
+    dateExecuted: string;
+    notes: string;
+    team: string[];
+    accountId: string;
+    contactId: string;
 }
 
 export interface Message {

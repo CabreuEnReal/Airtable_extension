@@ -98,7 +98,11 @@ export function ChatPanel({
                         <h2 className="text-sm font-bold text-gray-900 truncate leading-tight">
                             {contact.displayName}
                         </h2>
-                        <span className="text-[11px] font-medium text-[#00811A]">● En línea</span>
+                        {contact.phone ? (
+                            <span className="text-[11px] font-medium text-[#00811A]">● En línea</span>
+                        ) : (
+                            <span className="text-[11px] font-medium text-orange-500">● Sin número asociado</span>
+                        )}
                     </div>
                 </div>
                 <div className="flex items-center gap-1">
@@ -126,7 +130,14 @@ export function ChatPanel({
 
                 {messages.length === 0 && (
                     <div className="text-center text-body text-gray-400 mt-8">
-                        No hay mensajes aún. Envía un mensaje para iniciar la conversación.
+                        {contact.phone ? (
+                            'No hay mensajes aún. Envía un mensaje para iniciar la conversación.'
+                        ) : (
+                            <div className="space-y-2">
+                                <div className="text-orange-500 font-medium">⚠️ Sin número de teléfono</div>
+                                <div className="text-sm">Este contacto no tiene un número asociado. Agrega un número en Airtable para poder enviar mensajes.</div>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -134,7 +145,17 @@ export function ChatPanel({
             </div>
 
             {/* Input */}
-            <ChatInput onSend={onSend} onSendMedia={onSendMedia} onSendMetaTemplate={onSendMetaTemplate} onSelectAirtableTemplate={onSelectAirtableTemplate} templates={templates} sending={sending} pendingDraft={pendingDraft} onPendingDraftConsumed={onPendingDraftConsumed} />
+            <ChatInput 
+                onSend={onSend} 
+                onSendMedia={onSendMedia} 
+                onSendMetaTemplate={onSendMetaTemplate} 
+                onSelectAirtableTemplate={onSelectAirtableTemplate} 
+                templates={templates} 
+                sending={sending} 
+                disabled={!contact.phone}
+                pendingDraft={pendingDraft} 
+                onPendingDraftConsumed={onPendingDraftConsumed} 
+            />
         </div>
     );
 }

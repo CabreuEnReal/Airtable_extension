@@ -148,25 +148,29 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
 
     return (
         <div className="relative bg-white border-t border-gray-100 p-4 pt-2">
+            {/* ── Floating Menus (absolute, above toolbar) ── */}
+
             {/* Template selector popup */}
             {showTemplates && (
-                <TemplateSelector
-                    templates={templates}
-                    onSelectMeta={handleMetaSelect}
-                    onSelectAirtable={handleAirtableSelect}
-                    onClose={() => setShowTemplates(false)}
-                />
+                <div className="absolute bottom-full left-0 right-0 mb-3 z-50">
+                    <TemplateSelector
+                        templates={templates}
+                        onSelectMeta={handleMetaSelect}
+                        onSelectAirtable={handleAirtableSelect}
+                        onClose={() => setShowTemplates(false)}
+                    />
+                </div>
             )}
 
             {/* Emoji Selector */}
             {showEmojis && (
-                <div className="absolute bottom-full left-4 mb-2 bg-white border border-gray-200 rounded-xl shadow-xl p-3 z-10">
-                    <div className="grid grid-cols-8 gap-1 max-h-48 overflow-y-auto">
+                <div className="absolute bottom-full left-4 mb-3 bg-white border border-gray-100 rounded-2xl shadow-xl p-3 z-50 w-72 max-h-64 overflow-hidden">
+                    <div className="grid grid-cols-8 gap-1 max-h-56 overflow-y-auto">
                         {['😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '😟', '🙁', '☹️', '😮', '😯', '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😱', '', '😤', '😠', '😡', '🤬', '', '👿', '💀', '☠️', '💩', '🤡', '👹', '👺', '👻', '👽', '👾', '🤖', '💋', '💌', '💘', '💝', '💖', '💗', '💓', '💞', '💕', '❣️', '💔', '❤️', '🧡', '💛', '💚', '💙', '💜', '🤎', '🖤', '🤍', '💯', '💢', '💥', '💫', '💦', '💨', '�', '�', '�️', '�️', '�', '�', '�', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙', '�', '�'].map((emoji) => (
                             <button
                                 key={emoji}
                                 onClick={() => handleEmojiSelect(emoji)}
-                                className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-lg transition-colors"
+                                className="w-8 h-8 flex items-center justify-center hover:bg-[#00811A]/10 rounded-lg text-lg transition-colors"
                                 title={emoji}
                             >
                                 {emoji}
@@ -178,7 +182,7 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
 
             {/* Command Suggestions */}
             {showCommandSuggestions && (
-                <div className="relative mb-2">
+                <div className="absolute bottom-full left-0 right-0 mb-3 z-50">
                     <CommandSuggestions
                         templates={templates}
                         query={commandQuery}
@@ -250,6 +254,32 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
                     className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-[14px] text-gray-700 placeholder-gray-400 py-2.5"
                     disabled={disabled || showVoiceRecorder}
                     onKeyDown={(e) => {
+                        if (showCommandSuggestions) {
+                            if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                setSelectedIndex((prev: number) => prev + 1);
+                            } else if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                setSelectedIndex((prev: number) => prev > 0 ? prev - 1 : prev);
+                            } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                handleCommandClose();
+                            } else if (e.key === 'Enter') {
+                                e.preventDefault();
+                                // Delegate to CommandSuggestions via a synthetic select
+                                const filteredTemplates = templates.filter(t => {
+                                    const q = commandQuery.toLowerCase();
+                                    return t.name.toLowerCase().includes(q) ||
+                                           (t.content?.toLowerCase().includes(q)) ||
+                                           (t.category?.toLowerCase().includes(q));
+                                }).slice(0, 6);
+                                if (filteredTemplates[selectedIndex]) {
+                                    const t = filteredTemplates[selectedIndex];
+                                    handleCommandSelect(t, t.source === 'meta' ? 'meta' : 'airtable');
+                                }
+                            }
+                            return;
+                        }
                         if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
                             handleSend();

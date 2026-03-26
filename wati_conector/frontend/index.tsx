@@ -5,7 +5,7 @@ import './style.css';
 // ─── Services & types ───────────────────────────────────────
 import type { Contact, Message, Template, Notification as AppNotification } from './types/models';
 import { POLLING } from './constants/config';
-import { detectBaseId, getContacts } from './services/airtable';
+import { detectBaseId, getAllContacts } from './services/airtable';
 import {
     getDynamicApiConfig,
     getApiMessages, 
@@ -18,7 +18,8 @@ import {
     getAirtableTemplates, 
     renderAirtableTemplate, 
     sendMediaMessage, 
-    retryMediaDownload 
+    retryMediaDownload,
+    markMessagesAsRead 
 } from './services/pythonApi';
 import { adaptMessages } from './adapters/messageAdapter';
 import { adaptMetaTemplates, adaptAirtableTemplates } from './adapters/templateAdapter';
@@ -122,13 +123,15 @@ function SalesCRM() {
         const startTime = performance.now();
         
         try {
-            // Load Airtable contacts immediately (always works)
-            const contactsPromise = getContacts();
+            // Load Leads + CRM Contacts from Sales CRM (merged, owner names resolved)
+            const contactsPromise = getAllContacts();
             const [c] = await Promise.all([contactsPromise]);
             setContacts(c);
             
+            const leadCount = c.filter((x: Contact) => x.contactType === 'lead').length;
+            const contactCount = c.filter((x: Contact) => x.contactType === 'contact').length;
             const criticalTime = performance.now() - startTime;
-            setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: Airtable contacts loaded in ${criticalTime.toFixed(0)}ms: ${c.length} contacts`]);
+            setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: Sales CRM loaded in ${criticalTime.toFixed(0)}ms: ${leadCount} leads + ${contactCount} contacts`]);
             
             // Try Python API - start with messages as the primary test
             try {
@@ -236,6 +239,32 @@ function SalesCRM() {
     const selectedContact = contacts.find((c) => c.id === selectedContactId) ?? null;
     const contactMessages = messagesWithAirtableIds.filter((m) => m.contactId === selectedContactId);
 
+    // ─── Mark as read when selecting a conversation ──────────
+    const handleSelectContact = useCallback(async (contactId: string | null) => {
+        setSelectedContactId(contactId);
+        if (!contactId || !apiOnline) return;
+
+        // Find unread inbound messages for this contact
+        const unreadMsgs = messagesWithAirtableIds.filter(
+            (m: Message) => m.contactId === contactId && m.direction === 'inbound' && m.readStatus === 'unread'
+        );
+        if (unreadMsgs.length === 0) return;
+
+        // Mark as read in backend
+        const ids = unreadMsgs.map((m: Message) => Number(m.id));
+        try {
+            await markMessagesAsRead(ids);
+            // Update local state immediately
+            setMessages((prev: Message[]) =>
+                prev.map((m: Message) =>
+                    ids.includes(Number(m.id)) ? { ...m, readStatus: 'read' as const } : m
+                )
+            );
+        } catch (err: any) {
+            setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: WARN markAsRead: ${err.message}`]);
+        }
+    }, [apiOnline, messagesWithAirtableIds]);
+
     // ─── Send Meta Template ─────────────────────────────────
     const handleSendMetaTemplate = useCallback(async (template: Template, parameters: string[]) => {
         if (!selectedContact || sending || !apiOnline) return;
@@ -301,12 +330,11 @@ function SalesCRM() {
             empresa: selectedContact.company,
             email: selectedContact.email,
             phone: selectedContact.phone,
-            job_title: '', // Job Title field exists but not in Contact model yet
+            job_title: selectedContact.jobTitle,
             stage: selectedContact.stage,
-            stage_status: selectedContact.stageStatus,
-            business_unit: selectedContact.businessUnit,
-            request_date: selectedContact.requestDate,
-            tags: selectedContact.tags?.join(', ') || '',
+            lead_code: selectedContact.leadCode,
+            lead_source: selectedContact.leadSource,
+            industry: selectedContact.industry,
             fecha_actual: new Date().toLocaleDateString('es-MX'),
         };
         const rendered = content.replace(/\{\{(\w+)\}\}/g, (match: string, key: string) => fieldMap[key] ?? match);
@@ -513,7 +541,7 @@ function SalesCRM() {
                             contacts={contacts}
                             messages={messagesWithAirtableIds}
                             selectedContactId={selectedContactId}
-                            onSelectContact={setSelectedContactId}
+                            onSelectContact={handleSelectContact}
                         />
                     ) : undefined
                 }

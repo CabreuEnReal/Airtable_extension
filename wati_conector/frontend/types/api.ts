@@ -16,6 +16,8 @@ export interface ApiMessageOut {
     from_number: string;
     to_number: string;
     text_content: string;
+    direction: 'inbound' | 'outbound';
+    read_status: 'read' | 'unread';
     status: string;
     created_at: string;
     media_type: 'image' | 'document' | 'video' | 'audio' | null;
@@ -37,6 +39,8 @@ export interface ApiSendMessageResponse {
     from_number: string;
     to_number: string;
     text_content: string;
+    direction: 'inbound' | 'outbound';
+    read_status: 'read' | 'unread';
     status: string;
     created_at: string;
     media_type: 'image' | 'document' | 'video' | 'audio' | null;
