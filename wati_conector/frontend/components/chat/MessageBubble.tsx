@@ -3,6 +3,7 @@ import type { Message } from '../../types/models';
 import { formatTime } from '../../utils/formatters';
 import { AttachmentPreview } from './AttachmentPreview';
 import { resolveMediaUrl } from '../../adapters/messageAdapter';
+import { convertEmoticonsToEmoji, isOnlyEmoji } from '../../utils/emoji';
 
 interface MessageBubbleProps {
     message: Message;
@@ -39,7 +40,11 @@ export function MessageBubble({ message, contactName, onRetryMedia }: MessageBub
     const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
     const [pdfLoading, setPdfLoading] = useState(false);
     const isOut = message.direction === 'outbound';
-    const { display, isTemplate } = formatDisplayText(message.text || '');
+    const { display: rawDisplay, isTemplate } = formatDisplayText(message.text || '');
+    // Convert text emoticons (:-D, :), etc.) to Unicode emojis for display
+    const display = convertEmoticonsToEmoji(rawDisplay);
+    // Show emoji-only messages larger (WhatsApp-style)
+    const emojiOnly = !isTemplate && isOnlyEmoji(display);
 
     // Load PDF as blob when preview modal opens (only for ngrok URLs)
     useEffect(() => {
@@ -225,7 +230,11 @@ export function MessageBubble({ message, contactName, onRetryMedia }: MessageBub
                 )}
 
                 {display && (
-                    <div className={`text-body break-words whitespace-pre-wrap ${isTemplate ? 'text-gray-600 italic' : 'text-gray-800'}`}>{display}</div>
+                    <div className={`break-words whitespace-pre-wrap ${
+                        emojiOnly
+                            ? 'text-4xl leading-snug py-1'
+                            : `text-body ${isTemplate ? 'text-gray-600 italic' : 'text-gray-800'}`
+                    }`}>{display}</div>
                 )}
                 
                 {/* Attachments */}

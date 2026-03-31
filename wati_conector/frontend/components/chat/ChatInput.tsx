@@ -4,6 +4,7 @@ import { TemplateSelector } from './TemplateSelector';
 import { FileUploadButton } from './FileUploadButton';
 import { CommandSuggestions } from './CommandInput';
 import { VoiceRecorder } from './VoiceRecorder';
+import { EmojiPicker } from './EmojiPicker';
 
 interface ChatInputProps {
     onSend: (text: string) => void;
@@ -164,19 +165,11 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
 
             {/* Emoji Selector */}
             {showEmojis && (
-                <div className="absolute bottom-full left-4 mb-3 bg-white border border-gray-100 rounded-2xl shadow-xl p-3 z-50 w-72 max-h-64 overflow-hidden">
-                    <div className="grid grid-cols-8 gap-1 max-h-56 overflow-y-auto">
-                        {['😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '😟', '🙁', '☹️', '😮', '😯', '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😱', '', '😤', '😠', '😡', '🤬', '', '👿', '💀', '☠️', '💩', '🤡', '👹', '👺', '👻', '👽', '👾', '🤖', '💋', '💌', '💘', '💝', '💖', '💗', '💓', '💞', '💕', '❣️', '💔', '❤️', '🧡', '💛', '💚', '💙', '💜', '🤎', '🖤', '🤍', '💯', '💢', '💥', '💫', '💦', '💨', '�', '�', '�️', '�️', '�', '�', '�', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙', '�', '�'].map((emoji) => (
-                            <button
-                                key={emoji}
-                                onClick={() => handleEmojiSelect(emoji)}
-                                className="w-8 h-8 flex items-center justify-center hover:bg-[#00811A]/10 rounded-lg text-lg transition-colors"
-                                title={emoji}
-                            >
-                                {emoji}
-                            </button>
-                        ))}
-                    </div>
+                <div className="absolute bottom-full left-4 mb-3 z-50">
+                    <EmojiPicker
+                        onSelect={handleEmojiSelect}
+                        onClose={() => setShowEmojis(false)}
+                    />
                 </div>
             )}
 
