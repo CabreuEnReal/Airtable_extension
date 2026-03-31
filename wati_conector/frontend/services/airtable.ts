@@ -1,8 +1,8 @@
 import { AIRTABLE_CONFIG } from '../constants/config';
-import { TABLES, PEOPLE_FIELDS, LEAD_FIELDS } from '../types/airtable';
+import { TABLES, PEOPLE_FIELDS, LEAD_FIELDS, OPPORTUNITY_FIELDS } from '../types/airtable';
 import type { AirtableRecord, AirtableListResponse } from '../types/airtable';
 import type { Contact, Lead, Interaction } from '../types/models';
-import { adaptLeadsToContacts, adaptContacts, adaptLeads, adaptInteractions } from '../adapters/contactAdapter';
+import { adaptLeadsToContacts, adaptContacts, adaptOpportunitiesToContacts, adaptLeads, adaptInteractions } from '../adapters/contactAdapter';
 
 // ─── Mutable baseId (detected from URL at runtime) ─────────────────────────
 
@@ -21,6 +21,8 @@ export function detectBaseId(): string {
 
 // ─── Low-level Fetch ────────────────────────────────────────────────────────
 
+const WHATSAPP_VIEW = 'Whatsapp Data';
+
 async function paginatedList(tableName: string, params: Record<string, string> = {}): Promise<AirtableRecord[]> {
     let allRecords: AirtableRecord[] = [];
     let offset: string | undefined;
@@ -32,12 +34,35 @@ async function paginatedList(tableName: string, params: Record<string, string> =
         const res = await fetch(url, {
             headers: { Authorization: `Bearer ${AIRTABLE_CONFIG.TOKEN}` },
         });
-        if (!res.ok) throw new Error(`Airtable ${res.status}`);
+        if (!res.ok) throw new Error(`Airtable ${tableName} ${res.status}`);
         const data: AirtableListResponse = await res.json();
         allRecords = allRecords.concat(data.records || []);
         offset = data.offset;
     } while (offset);
     return allRecords;
+}
+
+/** Try with view first; if 422 (view not found), retry without view */
+async function paginatedListWithView(tableName: string, extraParams: Record<string, string> = {}): Promise<AirtableRecord[]> {
+    try {
+        return await paginatedList(tableName, { view: WHATSAPP_VIEW, ...extraParams });
+    } catch (err: any) {
+        if (err?.message?.includes('422')) {
+            console.warn(`View "${WHATSAPP_VIEW}" not found for ${tableName}, loading without view`);
+            return paginatedList(tableName, extraParams);
+        }
+        throw err;
+    }
+}
+
+/** Fetch a single table safely — returns [] on error instead of throwing */
+async function safeFetch(tableName: string, extraParams: Record<string, string> = {}): Promise<AirtableRecord[]> {
+    try {
+        return await paginatedListWithView(tableName, extraParams);
+    } catch (err) {
+        console.error(`Failed to load ${tableName}:`, err);
+        return [];
+    }
 }
 
 // ─── People lookup (Owner name resolution) ──────────────────────────────────
@@ -58,17 +83,20 @@ async function loadPeopleCache(): Promise<Map<string, string>> {
 // ─── All contacts (Leads + CRM Contacts merged, owner names resolved) ───────
 
 export async function getAllContacts(): Promise<Contact[]> {
-    const [leadRecords, contactRecords, people] = await Promise.all([
-        paginatedList(TABLES.LEADS, { filterByFormula: `{${LEAD_FIELDS.STAGE}} != 'No viable'` }),
-        paginatedList(TABLES.CONTACTS),
-        loadPeopleCache(),
+    // Each table is fetched independently — one failure won't block the others
+    const [leadRecords, contactRecords, opportunityRecords, people] = await Promise.all([
+        safeFetch(TABLES.LEADS, { filterByFormula: `{${LEAD_FIELDS.STAGE}} != 'No viable'` }),
+        safeFetch(TABLES.CONTACTS),
+        safeFetch(TABLES.OPPORTUNITIES, { filterByFormula: `{${OPPORTUNITY_FIELDS.PIPELINE_STAGE}} != 'Closed Lost'` }),
+        loadPeopleCache().catch(() => new Map<string, string>()),
     ]);
 
     const leads = adaptLeadsToContacts(leadRecords);
     const contacts = adaptContacts(contactRecords);
+    const opportunities = adaptOpportunitiesToContacts(opportunityRecords);
 
     // Resolve owner names
-    const allContacts = [...leads, ...contacts];
+    const allContacts = [...leads, ...contacts, ...opportunities];
     for (const c of allContacts) {
         if (c.ownerId && people.has(c.ownerId)) {
             c.ownerName = people.get(c.ownerId) ?? '';

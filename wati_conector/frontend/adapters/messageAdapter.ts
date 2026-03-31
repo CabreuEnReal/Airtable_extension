@@ -1,5 +1,6 @@
 import type { Message, MessageDirection, MessageStatus, Attachment } from '../types/models';
 import type { ApiMessageOut } from '../types/api';
+import type { MessageWithNumber } from '../types/whatsapp';
 import { PYTHON_API } from '../constants/config';
 
 // ─── Python API MessageOut → Message UI Model ───────────────────────────────
@@ -90,7 +91,7 @@ export function adaptMessage(raw: ApiMessageOut): Message {
         timestamp: raw.created_at ?? '',
         status: mapStatus(raw.status),
         readStatus: raw.read_status === 'unread' ? 'unread' : 'read',
-        contactId: String(raw.contact_id),
+        contactId: raw.contact_airtable_id || String(raw.contact_id),
         contactPhone: raw.from_number ?? '',
         fromNumber: raw.from_number ?? '',
         toNumber: raw.to_number ?? '',
@@ -106,3 +107,69 @@ export function adaptMessages(raws: ApiMessageOut[]): Message[] {
 }
 
 export { resolveMediaUrl };
+
+// ─── MessageWithNumber → Message UI Model ───────────────────────────────
+
+function inferMimeTypeFromInbox(raw: MessageWithNumber): string {
+    if (raw.media_mime_type) return raw.media_mime_type;
+    if (!raw.media_filename && !raw.media_type) return '';
+
+    const ext = (raw.media_filename || '').split('.').pop()?.toLowerCase();
+    const extMap: Record<string, string> = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        gif: 'image/gif', webp: 'image/webp',
+        mp4: 'video/mp4', '3gpp': 'video/3gpp',
+        mp3: 'audio/mpeg', ogg: 'audio/ogg', aac: 'audio/aac',
+        pdf: 'application/pdf',
+    };
+    if (ext && extMap[ext]) return extMap[ext];
+
+    const typeMap: Record<string, string> = {
+        image: 'image/jpeg', video: 'video/mp4',
+        audio: 'audio/mpeg', document: 'application/octet-stream',
+    };
+    return typeMap[raw.media_type || ''] || '';
+}
+
+function buildInboxAttachments(raw: MessageWithNumber): Attachment[] {
+    // No media_type or no media_url → no attachment
+    if (!raw.media_type || !raw.media_url) return [];
+
+    return [{
+        id: `media_${raw.id}`,
+        name: raw.media_filename || 'archivo',
+        url: resolveMediaUrl(raw.media_url),
+        mimeType: inferMimeTypeFromInbox(raw),
+        size: 0,
+        thumbnailUrl: undefined,
+        isVoice: raw.is_voice || raw.media_type === 'audio',
+    }];
+}
+
+export function adaptMessageWithNumber(raw: MessageWithNumber): Message {
+    // Determine read status: prefer read_status string, fallback to is_read boolean
+    const readStatus = raw.read_status
+        ? (raw.read_status === 'unread' ? 'unread' : 'read')
+        : (raw.is_read ? 'read' : 'unread');
+
+    return {
+        id: String(raw.id),
+        text: raw.text_content ?? '',
+        direction: raw.direction,
+        timestamp: raw.created_at ?? '',
+        status: mapStatus(raw.status),
+        readStatus,
+        contactId: String(raw.contact_id),
+        contactPhone: raw.contact_phone || raw.from_number || '',
+        fromNumber: raw.from_number ?? '',
+        toNumber: raw.to_number ?? '',
+        metaMessageId: raw.meta_message_id || raw.whatsapp_message_id || '',
+        attachments: buildInboxAttachments(raw),
+        isOptimistic: false,
+        mediaUnavailable: raw.media_type != null && raw.media_url == null,
+    };
+}
+
+export function adaptMessagesWithNumber(raws: MessageWithNumber[]): Message[] {
+    return raws.map(adaptMessageWithNumber);
+}

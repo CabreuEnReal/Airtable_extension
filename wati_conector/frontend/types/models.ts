@@ -12,7 +12,7 @@ export type MessageStatus =
 
 export type ReadStatus = 'unread' | 'read';
 
-export type ConversationFilter = 'all' | 'leads' | 'contacts' | 'open' | 'unread';
+export type ConversationFilter = 'all' | 'leads' | 'contacts' | 'opportunities' | 'open' | 'unread';
 
 export interface Contact {
     id: string;
@@ -30,8 +30,39 @@ export interface Contact {
     industry: string;
     ownerId: string;
     ownerName: string;
-    contactType: 'lead' | 'contact';
+    contactType: 'lead' | 'contact' | 'opportunity';
     avatarUrl?: string;
+    // ─── Contextual metadata (optional, for chat sidebar context) ────
+    // Shared
+    keyAccount?: boolean;
+    products?: string[];
+    isClient?: boolean;
+    linkedInSummary?: string;
+    // Lead-specific
+    callInsights?: string;
+    becameSQL?: boolean;
+    companyDescription?: string;
+    cltvTotal?: number;
+    // Contact-specific
+    isMainContact?: boolean;
+    decisionLevel?: number;
+    linkedIn?: string;
+    partnerType?: string;
+    airtableContactType?: string;
+    sponsorIn?: string[];
+    powerSponsorIn?: string[];
+    // Opportunity-specific
+    totalInstallPower?: string;
+    financeScheme?: string[];
+    internalProgress?: string;
+    sharepointUrl?: string;
+    priority?: string;
+    cltv?: number;
+    lastDoneActivity?: string;
+    siteNames?: string[];
+    linkedContactIds?: string[];
+    sponsorIds?: string[];
+    powerSponsorIds?: string[];
 }
 
 export interface Lead {

@@ -18,6 +18,8 @@ export function adaptMetaTemplate(raw: ApiTemplateOut): Template {
         status: (raw as any).status,
         components: (raw as any).components,
         parameterCount: (raw as any).parameter_count,
+        // Airtable-specific fields
+        variables: (raw as any).variables,
     };
 }
 

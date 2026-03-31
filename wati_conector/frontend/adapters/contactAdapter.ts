@@ -1,7 +1,7 @@
 import type { Contact, Lead, Interaction } from '../types/models';
 import type { AirtableRecord } from '../types/airtable';
 import type { ApiContactOut } from '../types/api';
-import { LEAD_FIELDS, CONTACT_FIELDS, INTERACTION_FIELDS } from '../types/airtable';
+import { LEAD_FIELDS, CONTACT_FIELDS, OPPORTUNITY_FIELDS, INTERACTION_FIELDS } from '../types/airtable';
 
 // ─── Lead Record → Contact UI Model (primary for conversations) ─────────────
 
@@ -21,13 +21,21 @@ export function adaptLeadToContact(raw: AirtableRecord): Contact {
         company: f[LEAD_FIELDS.COMPANY_NAME] ?? '',
         jobTitle: f[LEAD_FIELDS.LEAD_JOB_TITLE] ?? '',
         department: '',
-        stage: f[LEAD_FIELDS.STAGE] ?? '',
+        stage: safeString(f[LEAD_FIELDS.STAGE]),
         leadCode: f[LEAD_FIELDS.LEAD_CODE] ?? '',
         leadSource: f[LEAD_FIELDS.LEAD_SOURCE] ?? '',
         industry: f[LEAD_FIELDS.INDUSTRY] ?? '',
         ownerId: parseLinkedRecord(f[LEAD_FIELDS.OWNER]),
         ownerName: '',
         contactType: 'lead',
+        // Contextual metadata
+        keyAccount: !!f[LEAD_FIELDS.KEY_ACCOUNT],
+        becameSQL: !!f[LEAD_FIELDS.BECAME_SQL],
+        products: parseMultiSelect(f[LEAD_FIELDS.PRODUCTS_PRELIMINARY]),
+        callInsights: safeString(f[LEAD_FIELDS.CALL_INSIGHTS]),
+        linkedInSummary: safeString(f[LEAD_FIELDS.BP1_LINKEDIN_SUMMARY]),
+        companyDescription: safeString(f[LEAD_FIELDS.COMPANY_DESCRIPTION]),
+        cltvTotal: typeof f[LEAD_FIELDS.CLTV_TOTAL] === 'number' ? f[LEAD_FIELDS.CLTV_TOTAL] : undefined,
     };
 }
 
@@ -39,6 +47,12 @@ export function adaptCrmContact(raw: AirtableRecord): Contact {
     const lastName = f[CONTACT_FIELDS.LAST_NAME] ?? '';
     const contactName = f[CONTACT_FIELDS.CONTACT_NAME] ?? '';
     const accountName = parseArrayField(f[CONTACT_FIELDS.ACCOUNT_NAME]);
+
+    // Use Airtable's Contact Type if available, otherwise default to 'contact'
+    const rawContactType = f[CONTACT_FIELDS.CONTACT_TYPE];
+    const airtableCT = typeof rawContactType === 'object' && rawContactType?.name
+        ? rawContactType.name
+        : (typeof rawContactType === 'string' ? rawContactType : '');
 
     return {
         id: raw.id,
@@ -57,6 +71,67 @@ export function adaptCrmContact(raw: AirtableRecord): Contact {
         ownerId: parseLinkedRecord(f[CONTACT_FIELDS.ACCOUNT_OWNER]),
         ownerName: '',
         contactType: 'contact',
+        // Contextual metadata
+        isMainContact: !!f[CONTACT_FIELDS.IS_MAIN_CONTACT],
+        decisionLevel: typeof f[CONTACT_FIELDS.DECISION_LEVEL] === 'number' ? f[CONTACT_FIELDS.DECISION_LEVEL] : undefined,
+        isClient: parseBooleanLookup(f[CONTACT_FIELDS.IS_CLIENT]),
+        linkedIn: f[CONTACT_FIELDS.LINKEDIN] ?? '',
+        linkedInSummary: safeString(f[CONTACT_FIELDS.LINKEDIN_SUMMARY]),
+        partnerType: parseArrayField(f[CONTACT_FIELDS.PARTNER_TYPE]),
+        airtableContactType: airtableCT,
+        sponsorIn: parseLinkedRecords(f[CONTACT_FIELDS.SPONSOR_IN]),
+        powerSponsorIn: parseLinkedRecords(f[CONTACT_FIELDS.POWER_SPONSORS_IN]),
+        companyDescription: safeString(f[CONTACT_FIELDS.COMPANY_DESCRIPTION]),
+    };
+}
+
+// ─── Opportunity Record → Contact UI Model ──────────────────────────────────
+
+export function adaptOpportunityToContact(raw: AirtableRecord): Contact {
+    const f = raw.fields;
+    const opCode = f[OPPORTUNITY_FIELDS.OPPORTUNITY_CODE] ?? '';
+    const accountName = parseArrayField(f[OPPORTUNITY_FIELDS.ACCOUNT_NAME]);
+    const site = f[OPPORTUNITY_FIELDS.SITE] ?? '';
+    const mainEmail = parseArrayField(f[OPPORTUNITY_FIELDS.MAIN_CONTACT_EMAIL]);
+    const industry = parseArrayField(f[OPPORTUNITY_FIELDS.INDUSTRY]);
+
+    // Display: "OP-123 — AccountName" or just the code
+    const displayName = accountName
+        ? `${opCode} — ${accountName}`
+        : opCode || 'Sin código';
+
+    return {
+        id: raw.id,
+        displayName,
+        firstName: opCode,
+        lastName: accountName,
+        email: mainEmail,
+        phone: '', // Opportunities don't have direct phone; linked via Contacts
+        company: accountName,
+        jobTitle: site,
+        department: safeString(f[OPPORTUNITY_FIELDS.BUSINESS_UNIT]),
+        stage: safeString(f[OPPORTUNITY_FIELDS.PIPELINE_STAGE]),
+        leadCode: opCode,
+        leadSource: '',
+        industry,
+        ownerId: parseLinkedRecord(f[OPPORTUNITY_FIELDS.OPPORTUNITY_OWNER]),
+        ownerName: '',
+        contactType: 'opportunity',
+        // Contextual metadata
+        keyAccount: parseBooleanLookup(f[OPPORTUNITY_FIELDS.KEY_ACCOUNT]),
+        isClient: parseBooleanLookup(f[OPPORTUNITY_FIELDS.IS_CLIENT]),
+        products: parseMultiSelect(f[OPPORTUNITY_FIELDS.PRODUCTS_PRELIMINARY]),
+        financeScheme: parseMultiSelect(f[OPPORTUNITY_FIELDS.FINANCE_SCHEME]),
+        totalInstallPower: safeString(f[OPPORTUNITY_FIELDS.TOTAL_INSTALL_POWER]),
+        internalProgress: safeString(f[OPPORTUNITY_FIELDS.INTERNAL_PROGRESS]),
+        sharepointUrl: safeString(f[OPPORTUNITY_FIELDS.SHAREPOINT_REPOSITORY]),
+        priority: safeString(f[OPPORTUNITY_FIELDS.PRIORITY]),
+        cltv: typeof f[OPPORTUNITY_FIELDS.CLTV] === 'number' ? f[OPPORTUNITY_FIELDS.CLTV] : undefined,
+        lastDoneActivity: safeString(f[OPPORTUNITY_FIELDS.LAST_DONE_ACTIVITY]),
+        siteNames: parseMultiSelect(f[OPPORTUNITY_FIELDS.SITE_NAME_IDS]),
+        linkedContactIds: parseLinkedRecords(f[OPPORTUNITY_FIELDS.CONTACTS]),
+        sponsorIds: parseLinkedRecords(f[OPPORTUNITY_FIELDS.SPONSORS]),
+        powerSponsorIds: parseLinkedRecords(f[OPPORTUNITY_FIELDS.POWER_SPONSORS]),
     };
 }
 
@@ -112,6 +187,10 @@ export function adaptContacts(records: AirtableRecord[]): Contact[] {
     return records.map(adaptCrmContact);
 }
 
+export function adaptOpportunitiesToContacts(records: AirtableRecord[]): Contact[] {
+    return records.map(adaptOpportunityToContact);
+}
+
 export function adaptLeads(records: AirtableRecord[]): Lead[] {
     return records.map(adaptLead);
 }
@@ -134,6 +213,40 @@ function parseArrayField(val: unknown): string {
     if (Array.isArray(val) && val.length > 0) return String(val[0]);
     if (typeof val === 'string') return val;
     return '';
+}
+
+/** Safely convert any Airtable value to string. Handles:
+ *  - plain strings
+ *  - single select objects {id, name, color}
+ *  - AI text objects {state, errorType, value, isStale}
+ *  - numbers, booleans
+ *  - null/undefined → ''
+ */
+function safeString(val: unknown): string {
+    if (val == null) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+    if (typeof val === 'object') {
+        const obj = val as Record<string, unknown>;
+        // AI text field: {state, value, ...}
+        if ('value' in obj && 'state' in obj) return String(obj.value ?? '');
+        // Single select: {id, name, color}
+        if ('name' in obj) return String(obj.name ?? '');
+    }
+    return String(val);
+}
+
+function parseLinkedRecords(val: unknown): string[] {
+    if (!val) return [];
+    if (Array.isArray(val)) return val.map(String);
+    if (typeof val === 'string') return [val];
+    return [];
+}
+
+function parseBooleanLookup(val: unknown): boolean {
+    if (typeof val === 'boolean') return val;
+    if (Array.isArray(val) && val.length > 0) return !!val[0];
+    return false;
 }
 
 function parseMultiSelect(val: unknown): string[] {

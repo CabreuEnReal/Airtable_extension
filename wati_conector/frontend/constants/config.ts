@@ -8,7 +8,7 @@ export const AIRTABLE_CONFIG = {
 
 // Dynamic API configuration - will be set at runtime
 export const PYTHON_API = {
-    BASE_URL: 'https://superelementary-unrefusable-bertha.ngrok-free.dev', // Fallback
+    BASE_URL: 'https://cloud.energiareal.mx/dev/airtable-whatsapp-er-svc-api', // Fallback
     API_KEY: 'er_whatsapp_2024',
 } as const;
 
@@ -33,8 +33,11 @@ export function getApiConfig() {
 // ─── Polling Intervals (ms) ─────────────────────────────────────────────────
 
 export const POLLING = {
-    DATA_ACTIVE: 5_000,  // Reduced from 10s to 5s for more responsive updates
-    DATA_IDLE: 15_000,   // Reduced from 30s to 15s
+    INBOX_MESSAGES: 7_000,   // Inbox messages: 7s for near-realtime
+    INBOX_STATUS: 7_000,     // Inbox status/stats: 7s for unread badges
+    CONTACTS: 30_000,        // Contacts list: 30s
+    NUMBERS: 30_000,         // WhatsApp numbers: 30s (fast DB read)
+    API_HEALTH: 15_000,      // API health check: 15s for near-realtime status
 } as const;
 
 // ─── UI Constants ───────────────────────────────────────────────────────────
@@ -83,10 +86,6 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
     { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
-    { id: 'leads', label: 'Leads', icon: 'users' },
     { id: 'chat', label: 'Chat', icon: 'message-circle' },
-    { id: 'pipeline', label: 'Pipeline', icon: 'bar-chart' },
-    { id: 'opportunities', label: 'Opportunities', icon: 'target' },
-    { id: 'reportes', label: 'Reportes', icon: 'file-text' },
     { id: 'automations', label: 'Automations', icon: 'zap' },
 ];

@@ -1,13 +1,23 @@
 import { useState, useMemo } from 'react';
 import { ConversationFilters } from './ConversationFilters';
 import { ConversationItem } from './ConversationItem';
+import { NumberSelector } from '../whatsapp/NumberSelector';
 import type { Contact, Message, Conversation, ConversationFilter } from '../../types/models';
+import type { WhatsAppNumber, NumberStats } from '../../types/whatsapp';
 
 interface ConversationPanelProps {
     contacts: Contact[];
     messages: Message[];
     selectedContactId: string | null;
     onSelectContact: (id: string) => void;
+    // WhatsApp multi-number props
+    availableNumbers: WhatsAppNumber[];
+    selectedPhoneNumber: number | null;
+    inboxStats: Record<number, NumberStats>;
+    onNumberSelect: (phoneId: number) => void;
+    onNumberSync?: () => void;
+    numbersSyncing?: boolean;
+    numbersLoading: boolean;
 }
 
 function buildConversations(contacts: Contact[], messages: Message[]): Conversation[] {
@@ -49,6 +59,13 @@ export function ConversationPanel({
     messages,
     selectedContactId,
     onSelectContact,
+    availableNumbers,
+    selectedPhoneNumber,
+    inboxStats,
+    onNumberSelect,
+    onNumberSync,
+    numbersSyncing = false,
+    numbersLoading,
 }: ConversationPanelProps) {
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState<ConversationFilter>('all');
@@ -59,11 +76,11 @@ export function ConversationPanel({
         [contacts, messages]
     );
 
-    // Collect unique owners (only from leads that have an owner)
+    // Collect unique owners (from leads and opportunities that have an owner)
     const owners = useMemo(() => {
         const map = new Map<string, string>();
         for (const c of contacts) {
-            if (c.contactType === 'lead' && c.ownerId && c.ownerName) {
+            if ((c.contactType === 'lead' || c.contactType === 'opportunity') && c.ownerId && c.ownerName) {
                 map.set(c.ownerId, c.ownerName);
             }
         }
@@ -88,6 +105,7 @@ export function ConversationPanel({
         if (filter === 'open') list = list.filter((c) => c.totalMessages > 0);
         if (filter === 'leads') list = list.filter((c) => c.contact.contactType === 'lead');
         if (filter === 'contacts') list = list.filter((c) => c.contact.contactType === 'contact');
+        if (filter === 'opportunities') list = list.filter((c) => c.contact.contactType === 'opportunity');
 
         // Owner filter (only applies when viewing leads or all)
         if (ownerFilter !== 'all') {
@@ -104,6 +122,7 @@ export function ConversationPanel({
         all: conversations.length,
         leads: conversations.filter((c) => c.contact.contactType === 'lead').length,
         contacts: conversations.filter((c) => c.contact.contactType === 'contact').length,
+        opportunities: conversations.filter((c) => c.contact.contactType === 'opportunity').length,
         open: conversations.filter((c) => c.totalMessages > 0).length,
         unread: conversations.filter((c) => c.unreadCount > 0).length,
     }), [conversations]);
@@ -114,6 +133,19 @@ export function ConversationPanel({
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
                 <h2 className="text-card-heading font-semibold text-gray-800">Conversaciones</h2>
                 <span className="text-label text-gray-400">{filtered.length} de {conversations.length}</span>
+            </div>
+
+            {/* WhatsApp Number Selector */}
+            <div className="px-3 py-2 border-b border-gray-100">
+                <NumberSelector
+                    numbers={availableNumbers}
+                    selected={selectedPhoneNumber}
+                    stats={inboxStats}
+                    onSelect={onNumberSelect}
+                    onSync={onNumberSync}
+                    syncing={numbersSyncing}
+                    loading={numbersLoading}
+                />
             </div>
 
             {/* Search */}
@@ -134,7 +166,7 @@ export function ConversationPanel({
             <ConversationFilters active={filter} onChange={setFilter} counts={counts} />
 
             {/* Owner filter (shown when viewing leads or all, and owners exist) */}
-            {owners.length > 0 && (filter === 'leads' || filter === 'all') && (
+            {owners.length > 0 && (filter === 'leads' || filter === 'opportunities' || filter === 'all') && (
                 <div className="px-3 py-1.5 border-b border-gray-100">
                     <select
                         value={ownerFilter}

@@ -26,7 +26,14 @@ export function CommandSuggestions({
 }: CommandSuggestionsProps) {
     // Filter and rank suggestions based on query
     const getSuggestions = useCallback((searchQuery: string): CommandSuggestion[] => {
-        if (!searchQuery) return [];
+        // Show all templates when query is empty (user just typed "/")
+        if (!searchQuery) {
+            return templates.map(template => ({
+                template,
+                type: (template.source === 'meta' ? 'meta' : 'airtable') as 'meta' | 'airtable',
+                keywords: [],
+            })).slice(0, 8);
+        }
 
         const q = searchQuery.toLowerCase();
         const results: CommandSuggestion[] = [];
@@ -64,14 +71,14 @@ export function CommandSuggestions({
             }
         });
 
-        // Sort by score (descending) and limit to 6 results
+        // Sort by score (descending) and limit to 8 results
         return results
             .sort((a, b) => {
                 const scoreA = calculateScore(a.template, q);
                 const scoreB = calculateScore(b.template, q);
                 return scoreB - scoreA;
             })
-            .slice(0, 6);
+            .slice(0, 8);
     }, [templates]);
 
     const calculateScore = (template: Template, query: string): number => {

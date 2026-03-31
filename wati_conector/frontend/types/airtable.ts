@@ -3,6 +3,7 @@
 export const TABLES = {
     LEADS: 'Leads',
     CONTACTS: 'Contacts',
+    OPPORTUNITIES: 'Opportunities',
     ACCOUNTS: 'Accounts',
     INTERACTIONS: 'Interaction History',
     INTERACTION_TYPES: 'Interaction Types',
@@ -29,6 +30,13 @@ export const LEAD_FIELDS = {
     FIRST_CONTACT_DATE: 'First Contact Date',
     CALL_INSIGHTS: 'Call Insights',
     NOT_VIABLE_REASON: 'Not Viable Reason',
+    BECAME_SQL: 'Became SQL',
+    KEY_ACCOUNT: 'Key Account',
+    PRODUCTS_PRELIMINARY: 'Products Preliminary',
+    BP1_LINKEDIN_SUMMARY: 'BP1 - Linkedin Summary',
+    LEAD_SOURCE_URL: 'Lead Source URL',
+    COMPANY_DESCRIPTION: 'Company Description',
+    CLTV_TOTAL: 'CLTV TOTAL',
 } as const;
 
 // ─── Contact field constants ────────────────────────────────────────────────
@@ -46,9 +54,54 @@ export const CONTACT_FIELDS = {
     OPPORTUNITIES: 'Opportunities',
     CONTACT_TYPE: 'Contact Type',
     IS_MAIN_CONTACT: 'Is Main Contact',
+    DECISION_LEVEL: 'Decision Level',
     LINKEDIN: 'LinkedIn',
+    LINKEDIN_SUMMARY: 'Linkedin Summary',
+    IS_CLIENT: 'Is Client (from Account)',
+    PARTNER_TYPE: 'Partner Type',
+    SPONSOR_IN: 'Sponsor in',
+    POWER_SPONSORS_IN: 'Power Sponsors in',
+    COMPANY_DESCRIPTION: 'Company Description [aux]',
     ACCOUNT_NAME: 'Account Name [aux]',
+    ACCOUNT_RECORD_ID: 'Account Record ID [aux]',
     CONTACT_RECORD_ID: 'Contact Record ID [aux]',
+} as const;
+
+// ─── Opportunity field constants ────────────────────────────────────────────
+
+export const OPPORTUNITY_FIELDS = {
+    OPPORTUNITY_CODE: 'Opportunity Code',
+    OPPORTUNITY_ID: 'Opportunity ID [aux]',
+    ACCOUNT: 'Account',
+    ACCOUNT_NAME: 'Account Name [deprecate?]',
+    PIPELINE_STAGE: 'Pipeline Stage',
+    OPPORTUNITY_OWNER: 'Opportunity Owner',
+    CONTACTS: 'Contacts',
+    MAIN_CONTACT_EMAIL: 'Main Contact Email',
+    PRIORITY: 'Priority',
+    CLTV: 'CLTV',
+    TARGET_CLOSE_DATE: 'Target close date',
+    ACTUAL_CLOSE_DATE: 'Actual close date',
+    PRODUCTS_PRELIMINARY: 'Products Preliminary',
+    FINANCE_SCHEME: 'Finance Scheme Preliminary',
+    INDUSTRY: 'Industry (from Account)',
+    SITE: 'Site [aux]',
+    SOLAR_CI: 'Solar CI (kWp)',
+    TOTAL_INSTALL_POWER: 'Total Install Power (MW)',
+    NOTES: 'Notes',
+    LOST_REASONS: 'Lost Reasons',
+    BUSINESS_UNIT: 'Business Unit',
+    IS_BID: 'Is Bid',
+    KEY_ACCOUNT: 'Key Account',
+    INTERNAL_PROGRESS: 'Internal Progress',
+    SHAREPOINT_REPOSITORY: 'Sharepoint Repository',
+    SPONSORS: 'Sponsors',
+    POWER_SPONSORS: 'Power Sponsors',
+    LAST_DONE_ACTIVITY: 'Last Done Activity',
+    LEAD_SOURCE: 'Lead Source',
+    LEAD_SOURCE_TYPE: 'Lead Source Type',
+    IS_CLIENT: 'Is Client',
+    SITE_NAME_IDS: 'Site Name IDs',
 } as const;
 
 // ─── People field constants ─────────────────────────────────────────────────

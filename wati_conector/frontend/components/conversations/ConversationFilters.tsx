@@ -9,7 +9,8 @@ interface ConversationFiltersProps {
 const FILTERS: { key: ConversationFilter; label: string }[] = [
     { key: 'all', label: 'Todos' },
     { key: 'leads', label: 'Leads' },
-    { key: 'contacts', label: 'Contacts' },
+    { key: 'contacts', label: 'Contactos' },
+    { key: 'opportunities', label: 'Oportunidades' },
     { key: 'open', label: 'Abiertos' },
     { key: 'unread', label: 'No leídos' },
 ];
