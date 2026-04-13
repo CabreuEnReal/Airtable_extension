@@ -32,7 +32,7 @@ import {
     bulkMarkInboxAsRead,
     sendApiMessageFromNumber
 } from './services/pythonApi';
-import { adaptMessages, adaptMessagesWithNumber } from './adapters/messageAdapter';
+import { adaptMessages, adaptMessagesWithNumber, nowMexicoISO } from './adapters/messageAdapter';
 import { adaptMetaTemplates, adaptAirtableTemplates } from './adapters/templateAdapter';
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -611,7 +611,7 @@ function SalesCRM() {
                 ? `📋 Plantilla "${template.name}" enviada con: ${parameters.join(', ')}`
                 : `📋 Plantilla "${template.name}" enviada`,
             direction: 'outbound',
-            timestamp: new Date().toISOString(),
+            timestamp: nowMexicoISO(),
             status: 'sending',
             readStatus: 'read',
             contactId: selectedContact.id,
@@ -715,7 +715,7 @@ function SalesCRM() {
             id: tempId,
             text: '',
             direction: 'outbound',
-            timestamp: new Date().toISOString(),
+            timestamp: nowMexicoISO(),
             status: 'sending',
             readStatus: 'read',
             contactId: selectedContact.id,
@@ -805,7 +805,7 @@ function SalesCRM() {
             id: tempId,
             text,
             direction: 'outbound',
-            timestamp: new Date().toISOString(),
+            timestamp: nowMexicoISO(),
             status: 'sending',
             readStatus: 'read',
             contactId: selectedContact.id,

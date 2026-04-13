@@ -128,7 +128,7 @@ export function adaptOpportunityToContact(raw: AirtableRecord): Contact {
         priority: safeString(f[OPPORTUNITY_FIELDS.PRIORITY]),
         cltv: typeof f[OPPORTUNITY_FIELDS.CLTV] === 'number' ? f[OPPORTUNITY_FIELDS.CLTV] : undefined,
         lastDoneActivity: safeString(f[OPPORTUNITY_FIELDS.LAST_DONE_ACTIVITY]),
-        siteNames: parseMultiSelect(f[OPPORTUNITY_FIELDS.SITE_NAME_IDS]),
+        siteNames: parseMultiSelect(f[OPPORTUNITY_FIELDS.SITE]),
         linkedContactIds: parseLinkedRecords(f[OPPORTUNITY_FIELDS.CONTACTS]),
         sponsorIds: parseLinkedRecords(f[OPPORTUNITY_FIELDS.SPONSORS]),
         powerSponsorIds: parseLinkedRecords(f[OPPORTUNITY_FIELDS.POWER_SPONSORS]),
@@ -226,12 +226,18 @@ function safeString(val: unknown): string {
     if (val == null) return '';
     if (typeof val === 'string') return val;
     if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+    // Lookup / rollup fields return arrays — join their elements
+    if (Array.isArray(val)) {
+        return val.map((item) => safeString(item)).filter(Boolean).join(', ');
+    }
     if (typeof val === 'object') {
         const obj = val as Record<string, unknown>;
         // AI text field: {state, value, ...}
         if ('value' in obj && 'state' in obj) return String(obj.value ?? '');
         // Single select: {id, name, color}
         if ('name' in obj) return String(obj.name ?? '');
+        // Rich text or other keyed objects
+        if ('text' in obj) return String(obj.text ?? '');
     }
     return String(val);
 }

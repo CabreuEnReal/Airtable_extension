@@ -2,7 +2,7 @@
 
 export const AIRTABLE_CONFIG = {
     API_URL: 'https://api.airtable.com/v0',
-    TOKEN: '',
+    TOKEN: 'pat3dJ4qQIrtQyZVv.8c01aa7747537b56082909827abfb51c28a58e84b7931ca7c543948300e2947f',
     BASE_ID: 'apppzMiKVvd1F3gll', // ← Sales CRM (producción)
 } as const;
 

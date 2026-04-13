@@ -5,6 +5,30 @@ import { PYTHON_API } from '../constants/config';
 
 // ─── Python API MessageOut → Message UI Model ───────────────────────────────
 
+// Airtable Blocks sandbox runs in UTC and ignores Intl timeZone option.
+// Shift UTC timestamps to Mexico City time (UTC-6, no DST since 2022) and strip
+// timezone marker so the UTC sandbox displays them as correct local time.
+const MX_OFFSET_MS = -6 * 60 * 60 * 1000;
+
+function toMexicoTimestamp(ts: string): string {
+    if (!ts) return ts;
+    let normalized = ts;
+    if (!/[Zz]$/.test(ts) && !/[+-]\d{2}:?\d{2}$/.test(ts)) {
+        normalized = ts + 'Z';
+    }
+    const d = new Date(normalized);
+    if (isNaN(d.getTime())) return ts;
+    const mx = new Date(d.getTime() + MX_OFFSET_MS);
+    // Strip Z so sandbox (UTC) treats this as "local" = displays Mexico time
+    return mx.toISOString().replace('Z', '');
+}
+
+/** Returns current time as a Mexico City timestamp string (for optimistic messages). */
+export function nowMexicoISO(): string {
+    const mx = new Date(Date.now() + MX_OFFSET_MS);
+    return mx.toISOString().replace('Z', '');
+}
+
 const VALID_STATUSES: MessageStatus[] = ['sending', 'sent', 'delivered', 'read', 'failed', 'error'];
 
 function mapStatus(raw: string): MessageStatus {
@@ -88,7 +112,7 @@ export function adaptMessage(raw: ApiMessageOut): Message {
         id: String(raw.id),
         text: raw.text_content ?? '',
         direction: deriveDirection(raw),
-        timestamp: raw.created_at ?? '',
+        timestamp: toMexicoTimestamp(raw.created_at ?? ''),
         status: mapStatus(raw.status),
         readStatus: raw.read_status === 'unread' ? 'unread' : 'read',
         contactId: raw.contact_airtable_id || String(raw.contact_id),
@@ -156,7 +180,7 @@ export function adaptMessageWithNumber(raw: MessageWithNumber): Message {
         id: String(raw.id),
         text: raw.text_content ?? '',
         direction: raw.direction,
-        timestamp: raw.created_at ?? '',
+        timestamp: toMexicoTimestamp(raw.created_at ?? ''),
         status: mapStatus(raw.status),
         readStatus,
         contactId: String(raw.contact_id),

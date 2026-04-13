@@ -1,4 +1,6 @@
 // ─── Date / Time Formatters ─────────────────────────────────────────────────
+// Timestamps are pre-shifted to Mexico City time by messageAdapter.ts.
+// These formatters just parse and display — no timezone logic needed.
 
 export function formatTime(dateStr: string): string {
     if (!dateStr) return '';
