@@ -84,12 +84,18 @@ async function loadPeopleCache(): Promise<Map<string, string>> {
 
 export async function getAllContacts(): Promise<Contact[]> {
     // Each table is fetched independently — one failure won't block the others
+    // Always exclude Closed Lost at API level; client-side toggle controls search visibility
+    console.log('🔍 Loading contacts from all tables...');
+    
     const [leadRecords, contactRecords, opportunityRecords, people] = await Promise.all([
         safeFetch(TABLES.LEADS, { filterByFormula: `{${LEAD_FIELDS.STAGE}} != 'No viable'` }),
         safeFetch(TABLES.CONTACTS),
-        safeFetch(TABLES.OPPORTUNITIES, { filterByFormula: `{${OPPORTUNITY_FIELDS.PIPELINE_STAGE}} != 'Closed Lost'` }),
+        // Load all Opportunities without view to get ALL records
+        paginatedList(TABLES.OPPORTUNITIES),
         loadPeopleCache().catch(() => new Map<string, string>()),
     ]);
+    
+    console.log(`🔍 Loaded: ${leadRecords.length} leads, ${contactRecords.length} contacts, ${opportunityRecords.length} opportunities`);
 
     const leads = adaptLeadsToContacts(leadRecords);
     const contacts = adaptContacts(contactRecords);

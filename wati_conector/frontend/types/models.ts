@@ -15,7 +15,8 @@ export type ReadStatus = 'unread' | 'read';
 export type ConversationFilter = 'all' | 'leads' | 'contacts' | 'opportunities' | 'open' | 'unread';
 
 export interface Contact {
-    id: string;
+    id: string;                    // Airtable record ID (recXXXX)
+    dbContactId?: number;         // ← Backend DB ID for API calls (42)
     displayName: string;
     firstName: string;
     lastName: string;
@@ -52,6 +53,7 @@ export interface Contact {
     sponsorIn?: string[];
     powerSponsorIn?: string[];
     // Opportunity-specific
+    closingEscenario?: string;
     totalInstallPower?: string;
     financeScheme?: string[];
     internalProgress?: string;
@@ -105,6 +107,8 @@ export interface Message {
     status: MessageStatus;
     readStatus: ReadStatus;
     contactId: string;
+    airtableContactId?: string | null;
+    phone?: string;
     contactPhone: string;
     fromNumber: string;
     toNumber: string;
@@ -112,6 +116,7 @@ export interface Message {
     attachments: Attachment[];
     isOptimistic?: boolean;
     mediaUnavailable?: boolean;
+    conversationActive?: boolean;
 }
 
 export interface Attachment {

@@ -68,6 +68,10 @@ export interface ApiTemplateOut {
     created_at: string;
     updated_at: string;
     source?: 'meta' | 'local';
+    language?: string;
+    status?: string;
+    components?: unknown[];
+    parameter_count?: number;
 }
 
 export interface ApiAirtableTemplateOut {
@@ -98,6 +102,7 @@ export interface ApiSendTemplateRequest {
     template_name: string;
     language: string;
     parameters: string[];
+    from_phone_number_id?: string;  // ← DB id as string (e.g. "2") for multi-number inbox support
 }
 
 export interface ApiSendMediaRequest {
@@ -132,4 +137,49 @@ export interface ApiPhoneNumber {
     id: string;
     display_phone_number: string;
     verified_name: string;
+}
+
+// ─── Templates por número de WhatsApp ─────────────────────────────────────
+
+export interface ApiNumberTemplate {
+    name: string;
+    status: string;
+    language: string;
+    category: string;
+    header: string | null;
+    body: string;
+    components_count: number;
+}
+
+export interface ApiNumberTemplatesResponse {
+    whatsapp_number_id: number;
+    phone_number: string;
+    display_name: string | null;
+    waba_id: string;
+    status_filter: string;
+    total: number;
+    templates: ApiNumberTemplate[];
+}
+
+// ─── AI Interactions (N8N processed conversations) ─────────────────────────
+
+export interface ApiInteraction {
+    id: number;
+    conversation_id: string;
+    classification: string;
+    summary: string;
+    next_steps: string;
+    confidence: number;
+    date_executed: string;
+    airtable_record_id: string | null;
+    processed_at: string;
+    ai_processed: boolean;
+}
+
+export interface ApiContactInteractionsResponse {
+    contact_id: number;
+    airtable_record_id: string | null;
+    interactions: ApiInteraction[];
+    total: number;
+    message?: string;
 }

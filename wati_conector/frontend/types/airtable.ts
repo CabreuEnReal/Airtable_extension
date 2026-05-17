@@ -102,6 +102,7 @@ export const OPPORTUNITY_FIELDS = {
     LEAD_SOURCE_TYPE: 'Lead Source Type',
     IS_CLIENT: 'Is Client',
     SITE_NAME_IDS: 'Site Name IDs',
+    CLOSING_ESCENARIO: 'Closing Escenario',
 } as const;
 
 // ─── People field constants ─────────────────────────────────────────────────

@@ -30,9 +30,11 @@ import {
     getInboxMessages,
     markInboxMessageAsRead,
     bulkMarkInboxAsRead,
-    sendApiMessageFromNumber
+    sendApiMessageFromNumber,
+    getDefaultTemplate,
+    getNumberTemplates
 } from './services/pythonApi';
-import { adaptMessages, adaptMessagesWithNumber, nowMexicoISO } from './adapters/messageAdapter';
+import { adaptMessages, adaptMessagesWithNumber } from './adapters/messageAdapter';
 import { adaptMetaTemplates, adaptAirtableTemplates } from './adapters/templateAdapter';
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -47,7 +49,6 @@ function formatFileSize(bytes: number): string {
 
 // Layout & components
 import { AppLayout } from './components/layout/AppLayout';
-import { Sidebar } from './components/layout/Sidebar';
 import { ConversationPanel } from './components/conversations/ConversationPanel';
 import { ChatPanel } from './components/chat/ChatPanel';
 import { DetailPanel } from './components/detail/DetailPanel';
@@ -55,7 +56,6 @@ import { NotesModal } from './components/modals/NotesModal';
 import { Toast } from './components/common/Toast';
 import { Spinner } from './components/common/Spinner';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
-import { AutomationsPanel } from './components/automations/AutomationsPanel';
 
 // ─── Phone normalisation (strip +, spaces, dashes) ─────────
 
@@ -73,18 +73,28 @@ function phoneVariants(raw: string): string[] {
     const base = raw.replace(/[\s+\-()]/g, '');
     const variants = new Set<string>();
     variants.add(base);
-    // With Mexico 1 stripped
-    if (base.length === 13 && base.startsWith('521')) {
+    
+    // Mexican phone formats
+    if (base.startsWith('521') && base.length === 13) {
+        // 5215670011340 → 52670011340 (remove the 1 after 52)
         variants.add('52' + base.slice(3));
-    }
-    // With Mexico 1 added
-    if (base.length === 12 && base.startsWith('52')) {
-        variants.add('521' + base.slice(2));
-    }
-    // Without country code (last 10 digits)
-    if (base.length >= 10) {
+        // 5215670011340 → 5670011340 (last 10 digits)
         variants.add(base.slice(-10));
+    } else if (base.startsWith('52') && base.length === 12) {
+        // 52670011340 → 5215670011340 (add the 1 after 52)
+        variants.add('521' + base.slice(2));
+        // 52670011340 → 5670011340 (last 10 digits)
+        variants.add(base.slice(-10));
+    } else if (base.length >= 10) {
+        // Any format → last 10 digits
+        variants.add(base.slice(-10));
+        // If it's 10 digits, try adding 52 and 521
+        if (base.length === 10) {
+            variants.add('52' + base);
+            variants.add('521' + base);
+        }
     }
+    
     return [...variants];
 }
 
@@ -102,7 +112,6 @@ function SalesCRM() {
     const [loading, setLoading] = useState(true);
     const [apiOnline, setApiOnline] = useState(true);
     const [notification, setNotification] = useState<AppNotification | null>(null);
-    const [activeNav, setActiveNav] = useState('chat');
     const [showDetail, setShowDetail] = useState(true);
     const [showNotesModal, setShowNotesModal] = useState(false);
     const [debugLogs, setDebugLogs] = useState<string[]>([]);
@@ -117,9 +126,14 @@ function SalesCRM() {
     const [numbersSyncing, setNumbersSyncing] = useState(false);
     const [pendingDraft, setPendingDraft] = useState<string | null>(null);
     const [apiConfigLoaded, setApiConfigLoaded] = useState(false);
+    const [conversationWindowActive, setConversationWindowActive] = useState<boolean>(false);
+    const [windowStatusLoading, setWindowStatusLoading] = useState<boolean>(true);
 
     // Ref-based cache of recently-sent messages (survives poll cycles, lost on page reload)
     const sentMessagesRef = useRef<Message[]>([]);
+
+    // Ref to track selectedContact without adding it to polling deps
+    const selectedContactRef = useRef<Contact | null>(null);
 
     /** Merge server messages with locally-cached sent messages.
      *  - Preserves Airtable contactIds from previous state
@@ -166,6 +180,26 @@ function SalesCRM() {
 
     const addLog = useCallback((msg: string) => {
         setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: ${msg}`]);
+    }, []);
+
+    // ─── Extract conversationActive from adapted inbox messages by phone ──────
+    const updateConversationActive = useCallback((adapted: Message[]) => {
+        const selectedId = selectedContactRef.current?.id;
+        if (!selectedId) return;
+
+        const matched = [...adapted].reverse().find((m) =>
+            m.conversationActive !== undefined &&
+            m.airtableContactId === selectedId
+        );
+
+        if (matched) {
+            setConversationWindowActive(!!matched.conversationActive);
+        } else {
+            // No match = contacto sin actividad reciente ? ventana cerrada
+            setConversationWindowActive(false);
+        }
+        // En ambos casos, loading termina
+        setWindowStatusLoading(false);
     }, []);
 
     // ─── Initialize Dynamic API Configuration ──────────────────
@@ -293,6 +327,7 @@ function SalesCRM() {
                 // Load fresh messages for this number (with merge to preserve sent msgs)
                 const inboxMessages = await getInboxMessages(phoneId);
                 const adaptedMessages = adaptMessagesWithNumber(inboxMessages);
+                updateConversationActive(adaptedMessages);
                 setMessages((prev: Message[]) => mergeWithSentCache(adaptedMessages, prev));
                 
                 // Update stats
@@ -307,7 +342,7 @@ function SalesCRM() {
         } catch (err: any) {
             addLog(`⚠ Inbox status check failed for ${phoneId}: ${(err as Error).message}`);
         }
-    }, [inboxStats, addLog]);
+    }, [inboxStats, addLog, updateConversationActive]);
 
     // ─── Smart Polling: API Health Check ──────────────────────────────────────
     const checkApiHealth = useCallback(async () => {
@@ -362,7 +397,14 @@ function SalesCRM() {
                 setContacts(airtableContacts);
                 const leadCount = airtableContacts.filter((c: Contact) => c.contactType === 'lead').length;
                 const contactCount = airtableContacts.filter((c: Contact) => c.contactType === 'contact').length;
-                addLog(`Airtable: ${leadCount} leads + ${contactCount} contacts in ${(performance.now() - startTime).toFixed(0)}ms`);
+                const opportunityCount = airtableContacts.filter((c: Contact) => c.contactType === 'opportunity').length;
+                console.log('🔍 Contact types loaded:', {
+                    leads: leadCount,
+                    contacts: contactCount, 
+                    opportunities: opportunityCount,
+                    total: airtableContacts.length
+                });
+                addLog(`Airtable: ${leadCount} leads + ${contactCount} contacts + ${opportunityCount} opportunities in ${(performance.now() - startTime).toFixed(0)}ms`);
             } catch (err: any) {
                 addLog(`⚠ Airtable contacts failed: ${(err as Error).message}`);
             }
@@ -444,11 +486,12 @@ function SalesCRM() {
                 const inboxMessages = await getInboxMessages(selectedPhoneNumber);
                 if (!cancelled) {
                     const adapted = adaptMessagesWithNumber(inboxMessages);
+                    updateConversationActive(adapted);
                     setMessages((prev: Message[]) => {
                         const merged = mergeWithSentCache(adapted, prev);
                         // Shallow compare to avoid unnecessary re-renders
-                        const prevKey = prev.map((m: Message) => `${m.id}|${m.readStatus}|${m.status}`).join(',');
-                        const newKey = merged.map((m: Message) => `${m.id}|${m.readStatus}|${m.status}`).join(',');
+                        const prevKey = prev.map((m: Message) => `${m.id}|${m.readStatus}|${m.status}|${m.conversationActive}`).join(',');
+                        const newKey = merged.map((m: Message) => `${m.id}|${m.readStatus}|${m.status}|${m.conversationActive}`).join(',');
                         return prevKey === newKey ? prev : merged;
                     });
                 }
@@ -467,7 +510,7 @@ function SalesCRM() {
         const interval = setInterval(pollInboxMessages, POLLING.INBOX_MESSAGES);
 
         return () => { cancelled = true; clearInterval(interval); };
-    }, [selectedPhoneNumber, apiOnline, addLog]);
+    }, [selectedPhoneNumber, apiOnline, addLog, updateConversationActive]);
 
     // ─── Initial load + smart polling (stable deps — runs once) ─────────────
     useEffect(() => {
@@ -514,35 +557,142 @@ function SalesCRM() {
         return () => clearInterval(interval);
     }, [apiOnline, selectedPhoneNumber, checkInboxStatus]);
 
+    // ─── Reload Meta templates when selected number changes ─────────────────
+    useEffect(() => {
+        if (!apiOnline || !selectedPhoneNumber) return;
+
+        getNumberTemplates(selectedPhoneNumber, 'APPROVED')
+            .then((res) => {
+                // Convert ApiNumberTemplate[] → Template[] inline (no id from backend, use name)
+                const numberMetaTemplates: Template[] = res.templates.map((t) => ({
+                    id: `meta_${t.name}_${t.language}`,
+                    name: t.name,
+                    source: 'meta' as const,
+                    content: t.body,
+                    category: t.category,
+                    isActive: true,
+                    createdAt: '',
+                    updatedAt: '',
+                    language: t.language,
+                    status: t.status,
+                    parameterCount: (t.body.match(/\{\{\d+\}\}/g) || []).length,
+                }));
+                // Keep airtable templates, replace meta ones
+                setTemplates((prev: Template[]) => [
+                    ...prev.filter((t: Template) => t.source !== 'meta'),
+                    ...numberMetaTemplates,
+                ]);
+                addLog(`Loaded ${res.total} APPROVED templates for number ${selectedPhoneNumber}`);
+            })
+            .catch((err) => {
+                addLog(`⚠ Could not load templates for number ${selectedPhoneNumber}: ${err.message}`);
+            });
+    }, [selectedPhoneNumber, apiOnline, addLog]);
+
     // ─── Match messages to Airtable contacts by phone ───────
     const messagesWithAirtableIds = useMemo(() => {
-        return messages.map((m: Message) => {
+        const result = messages.map((m: Message) => {
             // For inbound: match on fromNumber (the contact's phone)
             // For outbound: match on toNumber (we sent TO the contact)
             // Try multiple phone fields to find the Airtable contact
             const phonesToTry = m.direction === 'outbound'
                 ? [m.toNumber, m.contactPhone]
-                : [m.fromNumber, m.contactPhone, m.toNumber];
+                : [m.fromNumber, m.contactPhone];
             let matched: Contact | undefined;
+            let matchedPhone: string | undefined;
             for (const p of phonesToTry) {
                 if (!p) continue;
                 for (const v of phoneVariants(p)) {
                     matched = phoneToContact.get(v);
-                    if (matched) break;
+                    if (matched) {
+                        matchedPhone = v;
+                        break;
+                    }
                 }
                 if (matched) break;
             }
-            return matched ? { ...m, contactId: matched.id } : m;
+            
+            
+            // matchedAirtable=true only when we found a real Airtable contact by phone
+            return matched
+                ? { ...m, contactId: matched.id, matchedAirtable: true }
+                : { ...m, matchedAirtable: false };
         });
+        
+        return result;
     }, [messages, phoneToContact]);
+
+    // ─── Unread count filtered to known Airtable contacts only ─────────────
+    // Since messages are scoped to selectedPhoneNumber (per-number polling),
+    // we filter the selected number and clear badges for other numbers.
+    const filteredInboxStats = useMemo(() => {
+        if (!selectedPhoneNumber) return inboxStats;
+        
+        // Count only messages matched to Airtable contacts for the selected number
+        const knownUnread = messagesWithAirtableIds.filter(
+            (m: Message) =>
+                m.direction === 'inbound' &&
+                m.readStatus === 'unread' &&
+                !!(m as any).matchedAirtable  // only messages matched to a real Airtable contact by phone
+        ).length;
+        
+        // Create filtered stats: selected number gets filtered count, others get 0
+        const filtered: Record<number, NumberStats> = {};
+        for (const [numberId, stats] of Object.entries(inboxStats)) {
+            const numId = Number(numberId);
+            const baseStats = stats || {
+                total_messages_today: 0,
+                response_rate: 0,
+                last_activity: null,
+            };
+            
+            if (numId === selectedPhoneNumber) {
+                // Selected number: apply Airtable filter
+                filtered[numId] = {
+                    ...baseStats,
+                    unread_count: knownUnread,
+                };
+            } else {
+                // Other numbers: clear unread count to avoid showing non-Airtable messages
+                filtered[numId] = {
+                    ...baseStats,
+                    unread_count: 0,
+                };
+            }
+        }
+        
+        return filtered;
+    }, [inboxStats, messagesWithAirtableIds, selectedPhoneNumber]);
 
     // ─── Derived state ──────────────────────────────────────
     const selectedContact = contacts.find((c) => c.id === selectedContactId) ?? null;
+    selectedContactRef.current = selectedContact;
     const contactMessages = messagesWithAirtableIds.filter((m) => m.contactId === selectedContactId);
+    
+    // Extract DB contact_id from messages for API calls
+    const selectedContactDbId = useMemo(() => {
+        if (!selectedContactId) return undefined;
+        
+        // Find a message that has the matching airtable contact ID and extract the DB contact_id
+        const messageWithContactId = messages.find(
+            (m) => m.contact_airtable_id === selectedContactId && m.contact_id
+        );
+        
+        console.log('🔍 DB Contact ID lookup:', {
+            selectedContactId,
+            found: !!messageWithContactId,
+            dbContactId: messageWithContactId?.contact_id,
+            totalMessages: messages.length
+        });
+        
+        return messageWithContactId?.contact_id;
+    }, [messages, selectedContactId]);
 
     // ─── Mark as read when selecting a conversation ──────────
     const handleSelectContact = useCallback(async (contactId: string | null) => {
         setSelectedContactId(contactId);
+        setWindowStatusLoading(true);
+        setConversationWindowActive(false); // avoid visual carry-over from previous contact
         if (!contactId || !apiOnline) return;
 
         // Find unread inbound messages for this contact
@@ -611,7 +761,7 @@ function SalesCRM() {
                 ? `📋 Plantilla "${template.name}" enviada con: ${parameters.join(', ')}`
                 : `📋 Plantilla "${template.name}" enviada`,
             direction: 'outbound',
-            timestamp: nowMexicoISO(),
+            timestamp: new Date().toISOString(),
             status: 'sending',
             readStatus: 'read',
             contactId: selectedContact.id,
@@ -625,11 +775,14 @@ function SalesCRM() {
         setMessages((prev: Message[]) => [...prev, optimisticMsg]);
 
         try {
+            // ✅ Buscar phone_number_id real (Meta) a partir del DB id seleccionado
+            const activeNumber = availableNumbers.find(n => n.id === selectedPhoneNumber);
             const result = await sendMetaTemplate(
                 template.name,
                 normalizePhone(selectedContact.phone),
                 parameters || [],
                 template.language,
+                activeNumber?.phone_number_id ?? null,
             );
             addLog(`Meta template sent OK: id=${result.id}, meta_id=${result.meta_message_id}`);
 
@@ -647,6 +800,8 @@ function SalesCRM() {
             );
             notify('success', `Plantilla "${template.name}" enviada a ${selectedContact.displayName}`);
         } catch (err: any) {
+            console.error('❌ ERROR sendMetaTemplate completo:', err);
+            console.error('❌ ERROR mensaje:', err.message);
             addLog(`ERROR sendMetaTemplate: ${err.message}`);
             setMessages((prev: Message[]) =>
                 prev.map((m: Message) => (m.id === tempId ? { ...m, status: 'failed' as const, isOptimistic: false } : m)),
@@ -655,7 +810,67 @@ function SalesCRM() {
         } finally {
             setSending(false);
         }
-    }, [selectedContact, sending, apiOnline, addLog, notify]);
+    }, [selectedContact, sending, apiOnline, addLog, notify, selectedPhoneNumber]);
+
+    // ─── Reopen 24h Conversation Window ─────────────────────────────────────
+    const handleReopenConversation = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
+        if (!selectedContact?.phone || !apiOnline) {
+            return { success: false, error: 'No hay contacto seleccionado o la API no está disponible' };
+        }
+        if (!selectedPhoneNumber) {
+            return { success: false, error: 'No hay número de WhatsApp seleccionado.' };
+        }
+        addLog(`Reopening 24h window for ${selectedContact.displayName} from number ${selectedPhoneNumber}`);
+        try {
+            // Use the APPROVED meta templates already loaded for the selected number
+            // Look for a "reopen" style template: volver_a_contactar, reopen, contactar, etc.
+            const approvedMetaTemplates = templates.filter((t: Template) => t.source === 'meta');
+            const reopenKeywords = ['volver_a_contactar', 'reopen', 'contactar', 'retomar', 'recontactar'];
+            const reopenTemplate = approvedMetaTemplates.find((t: Template) =>
+                reopenKeywords.some(kw => t.name.toLowerCase().includes(kw))
+            ) || approvedMetaTemplates[0]; // fallback to first approved template
+
+            // ✅ Buscar phone_number_id real (Meta) a partir del DB id seleccionado
+            const activeNumber = availableNumbers.find(n => n.id === selectedPhoneNumber);
+            const activePhoneNumberId = activeNumber?.phone_number_id ?? null;
+
+            console.log('🔍 Reopen - selectedPhoneNumber (DB id):', selectedPhoneNumber);
+            console.log('🔍 Reopen - phone_number_id (Meta):', activePhoneNumberId);
+            console.log('🔍 Reopen - approvedMetaTemplates:', approvedMetaTemplates.map((t: Template) => t.name));
+            console.log('🔍 Reopen - chosen template:', reopenTemplate?.name);
+
+            if (!reopenTemplate) {
+                // No approved templates loaded yet — fallback to getDefaultTemplate
+                addLog(`No approved templates loaded for number ${selectedPhoneNumber}, using default config`);
+                const config = await getDefaultTemplate();
+                await sendMetaTemplate(
+                    config.template_name,
+                    normalizePhone(selectedContact.phone),
+                    [selectedContact.displayName],
+                    config.language,
+                    activePhoneNumberId,
+                );
+            } else {
+                const paramCount = reopenTemplate.parameterCount ?? 0;
+                const parameters = paramCount > 0 ? new Array(paramCount).fill(selectedContact.displayName) : [];
+                addLog(`Using template: ${reopenTemplate.name} (${reopenTemplate.language}) with ${parameters.length} params`);
+                await sendMetaTemplate(
+                    reopenTemplate.name,
+                    normalizePhone(selectedContact.phone),
+                    parameters,
+                    reopenTemplate.language,
+                    activePhoneNumberId,
+                );
+            }
+            addLog(`Reopen template sent OK to ${selectedContact.phone}`);
+            notify('success', `Conversación reabierta con ${selectedContact.displayName}`);
+            return { success: true };
+        } catch (err: any) {
+            const msg = err?.message || 'Error desconocido';
+            addLog(`ERROR reopen: ${msg}`);
+            return { success: false, error: msg };
+        }
+    }, [selectedContact, apiOnline, addLog, notify, selectedPhoneNumber, templates]);
 
     // ─── Select Airtable Template (render client-side with contact data) ──────
     const handleSelectAirtableTemplate = useCallback((template: Template) => {
@@ -715,7 +930,7 @@ function SalesCRM() {
             id: tempId,
             text: '',
             direction: 'outbound',
-            timestamp: nowMexicoISO(),
+            timestamp: new Date().toISOString(),
             status: 'sending',
             readStatus: 'read',
             contactId: selectedContact.id,
@@ -805,7 +1020,7 @@ function SalesCRM() {
             id: tempId,
             text,
             direction: 'outbound',
-            timestamp: nowMexicoISO(),
+            timestamp: new Date().toISOString(),
             status: 'sending',
             readStatus: 'read',
             contactId: selectedContact.id,
@@ -853,7 +1068,7 @@ function SalesCRM() {
         } finally {
             setSending(false);
         }
-    }, [selectedContact, sending, apiOnline, addLog, notify]);
+    }, [selectedContact, sending, apiOnline, addLog, notify, selectedPhoneNumber]);
 
     // ─── Loading state ──────────────────────────────────────
     if (loading) {
@@ -875,57 +1090,43 @@ function SalesCRM() {
             )}
 
             <AppLayout
-                sidebar={
-                    <Sidebar
-                        activeNav={activeNav}
-                        onNavChange={setActiveNav}
-                        userName="Carlos A."
-                        userRole="Sales Admin"
+                conversations={
+                    <ConversationPanel
+                        contacts={contacts}
+                        messages={messagesWithAirtableIds}
+                        selectedContactId={selectedContactId}
+                        onSelectContact={handleSelectContact}
+                        availableNumbers={availableNumbers}
+                        selectedPhoneNumber={selectedPhoneNumber}
+                        inboxStats={filteredInboxStats}
+                        onNumberSelect={setSelectedPhoneNumber}
+                        onNumberSync={handleSyncNumbers}
+                        numbersSyncing={numbersSyncing}
+                        numbersLoading={numbersLoading}
                     />
                 }
-                fullContent={
-                    activeNav === 'automations'
-                        ? <AutomationsPanel onNotify={(type, text) => notify(type as any, text)} />
-                        : undefined
-                }
-                conversations={
-                    activeNav !== 'automations' ? (
-                        <ConversationPanel
-                            contacts={contacts}
-                            messages={messagesWithAirtableIds}
-                            selectedContactId={selectedContactId}
-                            onSelectContact={handleSelectContact}
-                            availableNumbers={availableNumbers}
-                            selectedPhoneNumber={selectedPhoneNumber}
-                            inboxStats={inboxStats}
-                            onNumberSelect={setSelectedPhoneNumber}
-                            onNumberSync={handleSyncNumbers}
-                            numbersSyncing={numbersSyncing}
-                            numbersLoading={numbersLoading}
-                        />
-                    ) : undefined
-                }
                 chat={
-                    activeNav !== 'automations' ? (
-                        <ChatPanel
-                            contact={selectedContact}
-                            messages={contactMessages}
-                            templates={templates}
-                            onSend={handleSend}
-                            onSendMedia={handleSendMedia}
-                            onSendMetaTemplate={handleSendMetaTemplate}
-                            onSelectAirtableTemplate={handleSelectAirtableTemplate}
-                            onRetryMedia={handleRetryMedia}
-                            sending={sending}
-                            onOpenDetail={() => setShowDetail(!showDetail)}
-                            onOpenNotes={() => setShowNotesModal(true)}
-                            pendingDraft={pendingDraft}
-                            onPendingDraftConsumed={() => setPendingDraft(null)}
-                        />
-                    ) : undefined
+                    <ChatPanel
+                        contact={selectedContact}
+                        messages={contactMessages}
+                        templates={templates}
+                        onSend={handleSend}
+                        onSendMedia={handleSendMedia}
+                        onSendMetaTemplate={handleSendMetaTemplate}
+                        onSelectAirtableTemplate={handleSelectAirtableTemplate}
+                        onRetryMedia={handleRetryMedia}
+                        sending={sending}
+                        onOpenDetail={() => setShowDetail(!showDetail)}
+                        onOpenNotes={() => setShowNotesModal(true)}
+                        pendingDraft={pendingDraft}
+                        onPendingDraftConsumed={() => setPendingDraft(null)}
+                        onReopenConversation={handleReopenConversation}
+                        conversationActive={conversationWindowActive}
+                        windowStatusLoading={windowStatusLoading}
+                    />
                 }
                 detail={
-                    activeNav !== 'automations' && showDetail && selectedContact ? (
+                    showDetail && selectedContact ? (
                         <DetailPanel
                             contact={selectedContact}
                             contacts={contacts}
@@ -943,6 +1144,7 @@ function SalesCRM() {
                 open={showNotesModal}
                 onClose={() => setShowNotesModal(false)}
                 contactName={selectedContact?.displayName ?? ''}
+                airtableContactId={selectedContactId ?? undefined}
             />
 
             {/* Toast */}
@@ -951,9 +1153,9 @@ function SalesCRM() {
                 onDismiss={() => setNotification(null)}
             />
 
-            {/* Debug log panel */}
-            {debugLogs.length > 0 && (
-                <div className={`fixed bottom-0 left-sidebar right-0 bg-gray-900/95 z-40 transition-all ${debugMinimized ? '' : 'max-h-28 overflow-y-auto p-2'}`}>
+            {/* Debug log panel - TEMPORARILY HIDDEN FOR PRESENTATION */}
+            {/* {debugLogs.length > 0 && (
+                <div className={`fixed bottom-0 left-0 right-0 bg-gray-900/95 z-40 transition-all ${debugMinimized ? '' : 'max-h-28 overflow-y-auto p-2'}`}>
                     <div className={`flex justify-between items-center ${debugMinimized ? 'px-2 py-1' : 'mb-1'}`}>
                         <button onClick={() => setDebugMinimized(!debugMinimized)} className="text-xs text-gray-400 hover:text-white font-mono flex items-center gap-1">
                             <span>{debugMinimized ? '▲' : '▼'}</span> Debug Log ({debugLogs.length})
@@ -967,9 +1169,10 @@ function SalesCRM() {
                         <div key={i} className={`text-xs font-mono ${log.includes('ERROR') ? 'text-red' : 'text-green-light1'}`}>{log}</div>
                     ))}
                 </div>
-            )}
+            )} */}
         </div>
     );
 }
 
 initializeBlock({interface: () => <ErrorBoundary><SalesCRM /></ErrorBoundary>});
+

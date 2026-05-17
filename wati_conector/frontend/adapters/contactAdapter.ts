@@ -111,6 +111,7 @@ export function adaptOpportunityToContact(raw: AirtableRecord): Contact {
         jobTitle: site,
         department: safeString(f[OPPORTUNITY_FIELDS.BUSINESS_UNIT]),
         stage: safeString(f[OPPORTUNITY_FIELDS.PIPELINE_STAGE]),
+        closingEscenario: safeString(f[OPPORTUNITY_FIELDS.CLOSING_ESCENARIO]),
         leadCode: opCode,
         leadSource: '',
         industry,

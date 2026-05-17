@@ -8,7 +8,7 @@ export const AIRTABLE_CONFIG = {
 
 // Dynamic API configuration - will be set at runtime
 export const PYTHON_API = {
-    BASE_URL: 'https://cloud.energiareal.mx/dev/airtable-whatsapp-er-svc-api', // Fallback
+    BASE_URL: 'https://cloud.energiareal.mx/airtable-whatsapp-er-svc-api', // Fallback https://superelementary-unrefusable-bertha.ngrok-free.dev' https://cloud.energiareal.mx/dev/airtable-whatsapp-er-svc-api
     API_KEY: 'er_whatsapp_2024',
 } as const;
 

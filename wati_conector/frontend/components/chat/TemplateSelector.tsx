@@ -6,9 +6,10 @@ interface TemplateSelectorProps {
     onSelectMeta: (template: Template, parameters: string[]) => void;
     onSelectAirtable: (template: Template) => void;
     onClose: () => void;
+    contact?: { displayName: string } | null;
 }
 
-export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, onClose }: TemplateSelectorProps) {
+export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, onClose, contact }: TemplateSelectorProps) {
     const [search, setSearch] = useState('');
     const [metaParamTemplate, setMetaParamTemplate] = useState<Template | null>(null);
     const [paramValues, setParamValues] = useState<string[]>([]);
@@ -29,6 +30,21 @@ export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, on
 
     const handleMetaClick = (t: Template) => {
         const count = t.parameterCount ?? 0;
+        
+        // Auto-fill parameters for any template with parameters
+        console.log('🔍 TemplateSelector - template:', t.name);
+        console.log('🔍 TemplateSelector - contact:', contact);
+        console.log('🔍 TemplateSelector - contact.displayName:', contact?.displayName);
+        console.log('🔍 TemplateSelector - parameterCount:', count);
+        
+        // Auto-fill with contact name for any template that has parameters
+        if (count >= 1 && contact?.displayName) {
+            const parameters = new Array(count).fill(contact.displayName);
+            console.log(`🔍 TemplateSelector: auto-filling ${count} parameters for ${t.name} with:`, parameters);
+            onSelectMeta(t, parameters);
+            return;
+        }
+        
         if (count > 0) {
             setMetaParamTemplate(t);
             setParamValues(new Array(count).fill(''));

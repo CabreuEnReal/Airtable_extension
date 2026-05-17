@@ -37,7 +37,7 @@ function buildConversations(contacts: Contact[], messages: Message[]): Conversat
         });
         const lastMessage = sorted[0] ?? null;
         const unreadCount = msgs.filter(
-            (m) => m.direction === 'inbound' && m.readStatus === 'unread'
+            (m) => m.direction === 'inbound' && m.readStatus === 'unread' && !!(m as any).matchedAirtable
         ).length;
 
         return {
@@ -70,6 +70,7 @@ export function ConversationPanel({
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState<ConversationFilter>('all');
     const [ownerFilter, setOwnerFilter] = useState<string>('all');
+    const [includeClosedLost, setIncludeClosedLost] = useState(false);
 
     const conversations = useMemo(
         () => buildConversations(contacts, messages),
@@ -90,7 +91,17 @@ export function ConversationPanel({
     const filtered = useMemo(() => {
         let list = conversations;
 
-        if (search) {
+        // Closed Lost visibility:
+        // - Without search: always hidden (except when viewing opportunities)
+        // - With search: hidden unless toggle is ON
+        const isSearchActive = search.trim().length > 0;
+        const isViewingOpportunities = filter === 'opportunities';
+        const hideClosedLost = (!isSearchActive || !includeClosedLost) && !isViewingOpportunities;
+        if (hideClosedLost) {
+            list = list.filter((c) => c.contact.closingEscenario !== 'Closed Lost');
+        }
+
+        if (isSearchActive) {
             const q = search.toLowerCase();
             list = list.filter(
                 (c) =>
@@ -116,7 +127,7 @@ export function ConversationPanel({
         // Phone validation will be handled in ChatPanel
 
         return list;
-    }, [conversations, search, filter, ownerFilter]);
+    }, [conversations, search, filter, ownerFilter, includeClosedLost]);
 
     const counts = useMemo(() => ({
         all: conversations.length,
@@ -178,6 +189,25 @@ export function ConversationPanel({
                             <option key={o.id} value={o.id}>{o.name}</option>
                         ))}
                     </select>
+                </div>
+            )}
+
+            {/* Closed Lost toggle (only visible when searching, on opportunities or all filter) */}
+            {search.trim().length > 0 && (filter === 'opportunities' || filter === 'all') && (
+                <div className="px-3 py-1.5 border-b border-gray-100">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <div className="relative">
+                            <input
+                                type="checkbox"
+                                checked={includeClosedLost}
+                                onChange={(e) => setIncludeClosedLost(e.target.checked)}
+                                className="sr-only peer"
+                            />
+                            <div className="w-8 h-[18px] bg-gray-200 rounded-full peer-checked:bg-[#00811A] transition-colors"></div>
+                            <div className="absolute left-0.5 top-0.5 w-3.5 h-3.5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-[14px]"></div>
+                        </div>
+                        <span className="text-xs text-gray-500">Incluir Closed Lost</span>
+                    </label>
                 </div>
             )}
 

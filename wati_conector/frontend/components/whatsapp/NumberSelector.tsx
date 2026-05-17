@@ -20,6 +20,7 @@ export const NumberSelector: React.FC<NumberSelectorProps> = ({
     syncing = false,
     loading = false
 }) => {
+    const activeNumbers = numbers.filter(n => n.is_active);
     const getStatusColor = (status: WhatsAppNumber['connection_status']) => {
         switch (status) {
             case 'connected': return 'bg-green-500';
@@ -52,11 +53,11 @@ export const NumberSelector: React.FC<NumberSelectorProps> = ({
         );
     }
 
-    if (numbers.length === 0) {
+    if (activeNumbers.length === 0) {
         return (
             <div className="bg-white border rounded-lg p-4">
                 <h3 className="font-semibold text-gray-900 mb-2">Números WhatsApp</h3>
-                <p className="text-gray-500 text-sm">No hay números configurados</p>
+                <p className="text-gray-500 text-sm">No hay números activos configurados</p>
             </div>
         );
     }
@@ -66,7 +67,7 @@ export const NumberSelector: React.FC<NumberSelectorProps> = ({
             <div className="p-4 border-b flex items-center justify-between">
                 <div>
                     <h3 className="font-semibold text-gray-900">Números WhatsApp</h3>
-                    <p className="text-gray-500 text-sm">{numbers.length} números disponibles</p>
+                    <p className="text-gray-500 text-sm">{activeNumbers.length} número{activeNumbers.length !== 1 ? 's' : ''} disponible{activeNumbers.length !== 1 ? 's' : ''}</p>
                 </div>
                 {onSync && (
                     <button
@@ -85,7 +86,7 @@ export const NumberSelector: React.FC<NumberSelectorProps> = ({
             </div>
             
             <div className="max-h-96 overflow-y-auto">
-                {numbers.map((number) => {
+                {activeNumbers.map((number) => {
                     const numberStats = stats[number.id];
                     const isSelected = selected === number.id;
                     

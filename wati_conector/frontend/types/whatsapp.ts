@@ -3,6 +3,7 @@
 export interface WhatsAppNumber {
     id: number;
     phone_number_id: string;
+    waba_id: string | null;
     display_name: string | null;
     phone_number: string;
     is_active: boolean;
@@ -42,6 +43,7 @@ export interface MessageInbox {
 export interface MessageWithNumber {
     id: number;
     contact_id: number;
+    contact_airtable_id?: string | null;
     contact_phone?: string;
     contact_name?: string;
     from_number: string;
@@ -63,4 +65,6 @@ export interface MessageWithNumber {
     created_at: string;
     updated_at?: string;
     whatsapp_number_id: number | null;
+    last_inbound_at?: string | null;
+    conversation_active?: boolean;
 }

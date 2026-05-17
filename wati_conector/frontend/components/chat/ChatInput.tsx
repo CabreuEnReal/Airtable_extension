@@ -16,9 +16,10 @@ interface ChatInputProps {
     disabled?: boolean;
     pendingDraft?: string | null;
     onPendingDraftConsumed?: () => void;
+    contact?: { displayName: string } | null;
 }
 
-export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAirtableTemplate, templates = [], sending, disabled = false, pendingDraft, onPendingDraftConsumed }: ChatInputProps) {
+export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAirtableTemplate, templates = [], sending, disabled = false, pendingDraft, onPendingDraftConsumed, contact }: ChatInputProps) {
     const [draft, setDraft] = useState('');
     const [showTemplates, setShowTemplates] = useState(false);
     const [showEmojis, setShowEmojis] = useState(false);
@@ -41,7 +42,7 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
     };
 
     const handleEmojiSelect = (emoji: string) => {
-        setDraft(prev => prev + emoji);
+        setDraft((prev: string) => prev + emoji);
         setShowEmojis(false);
     };
 
@@ -83,9 +84,26 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
         setDraft('');
         
         if (type === 'meta') {
-            // Send Meta template directly
-            if (onSendMetaTemplate) {
-                onSendMetaTemplate(template, []);
+            // Auto-fill parameters for any template with parameters
+            console.log('🔍 Command slash - template:', template.name);
+            console.log('🔍 Command slash - contact:', contact);
+            console.log('🔍 Command slash - contact.displayName:', contact?.displayName);
+            console.log('🔍 Command slash - parameterCount:', template.parameterCount);
+            
+            const count = template.parameterCount ?? 0;
+            if (count >= 1 && contact?.displayName) {
+                // Auto-fill with contact name for any template that has parameters
+                const parameters = new Array(count).fill(contact.displayName);
+                console.log(`🔍 Command slash: auto-filling ${count} parameters for ${template.name} with:`, parameters);
+                if (onSendMetaTemplate) {
+                    onSendMetaTemplate(template, parameters);
+                }
+            } else {
+                // Send Meta template directly (no parameters or no contact)
+                console.log('🔍 Command slash: sending template without parameters:', template.name);
+                if (onSendMetaTemplate) {
+                    onSendMetaTemplate(template, []);
+                }
             }
         } else {
             // Generate Airtable template content for manual sending
@@ -159,6 +177,7 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
                         onSelectMeta={handleMetaSelect}
                         onSelectAirtable={handleAirtableSelect}
                         onClose={() => setShowTemplates(false)}
+                        contact={contact}
                     />
                 </div>
             )}
