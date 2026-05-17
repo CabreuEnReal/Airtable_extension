@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getAirtableTemplates, createAirtableTemplate, updateAirtableTemplate, deleteAirtableTemplate } from '../../services/pythonApi';
-import type { ApiAirtableTemplateOut } from '../../types/api';
+import { getAirtableTemplates, createAirtableTemplate, updateAirtableTemplate, deleteAirtableTemplate, getApiTemplates, getDefaultTemplate, setDefaultTemplate } from '../../services/pythonApi';
+import type { ApiAirtableTemplateOut, ApiTemplateOut } from '../../types/api';
 
 // ─── Available variables that map to Airtable contact fields ────────────────
 const AVAILABLE_VARIABLES = [
@@ -307,6 +307,9 @@ export function AutomationsPanel({ onNotify }: AutomationsPanelProps) {
     // ─── RENDER: Template List ───────────────────────────────
     return (
         <div className="h-full flex flex-col bg-surface-light">
+            {/* Default reopening template config */}
+            <DefaultTemplateSection onNotify={onNotify} />
+
             {/* Header */}
             <div className="bg-white border-b border-gray-100 px-6 py-4">
                 <div className="flex items-center justify-between mb-3">
@@ -424,6 +427,152 @@ export function AutomationsPanel({ onNotify }: AutomationsPanelProps) {
                             </button>
                         </div>
                     </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── Default Template Config Section ─────────────────────────────────────────
+
+function extractTemplateBody(components: unknown[] | undefined): string {
+    if (!components || !Array.isArray(components)) return '';
+    for (const comp of components) {
+        const c = comp as Record<string, unknown>;
+        if (c.type === 'BODY' && typeof c.text === 'string') return c.text;
+    }
+    return '';
+}
+
+function DefaultTemplateSection({ onNotify }: { onNotify: (type: 'success' | 'error' | 'info', text: string) => void }) {
+    const [metaTemplates, setMetaTemplates] = useState<ApiTemplateOut[]>([]);
+    const [selectedName, setSelectedName] = useState<string>('');
+    const [currentDefault, setCurrentDefault] = useState<string | null>(null);
+    const [loadingTemplates, setLoadingTemplates] = useState(true);
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const [all, current] = await Promise.allSettled([
+                    getApiTemplates(),
+                    getDefaultTemplate(),
+                ]);
+                if (cancelled) return;
+                if (all.status === 'fulfilled') {
+                    const approved = all.value.filter(
+                        (t: ApiTemplateOut) => t.source === 'meta' && (t.status === 'APPROVED' || t.is_active),
+                    );
+                    setMetaTemplates(approved);
+                }
+                if (current.status === 'fulfilled') {
+                    setCurrentDefault(current.value.template_name);
+                    setSelectedName(current.value.template_name);
+                }
+            } catch {
+                // silent — section will show empty
+            } finally {
+                if (!cancelled) setLoadingTemplates(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+    const selectedTemplate = useMemo(
+        () => metaTemplates.find((t) => t.name === selectedName),
+        [metaTemplates, selectedName],
+    );
+
+    const previewText = useMemo(() => {
+        if (!selectedTemplate) return '';
+        return extractTemplateBody(selectedTemplate.components) || selectedTemplate.content || '';
+    }, [selectedTemplate]);
+
+    const isDirty = selectedName !== '' && selectedName !== currentDefault;
+
+    const handleSave = useCallback(async () => {
+        if (!selectedTemplate || saving) return;
+        setSaving(true);
+        try {
+            await setDefaultTemplate(selectedTemplate.name, selectedTemplate.language || 'es_MX');
+            setCurrentDefault(selectedTemplate.name);
+            onNotify('success', 'Plantilla de re-apertura guardada');
+        } catch (err: any) {
+            onNotify('error', `Error guardando: ${err.message}`);
+        } finally {
+            setSaving(false);
+        }
+    }, [selectedTemplate, saving, onNotify]);
+
+    if (loadingTemplates) {
+        return (
+            <div className="bg-white border-b border-gray-100 px-6 py-4">
+                <div className="flex items-center gap-2 text-sm text-gray-400">
+                    <div className="animate-spin text-base">◌</div>
+                    Cargando plantillas Meta...
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="bg-white border-b border-gray-200 px-6 py-4">
+            <div className="flex items-center gap-2 mb-3">
+                <span className="text-lg">🔄</span>
+                <div>
+                    <h2 className="text-sm font-semibold text-gray-800">Plantilla de re-apertura</h2>
+                    <p className="text-xs text-gray-400">Se envía automáticamente para reabrir conversaciones expiradas (24h)</p>
+                </div>
+            </div>
+
+            {metaTemplates.length === 0 ? (
+                <p className="text-xs text-gray-400 italic">No se encontraron plantillas Meta aprobadas.</p>
+            ) : (
+                <div className="flex flex-col gap-3">
+                    <div className="flex items-end gap-3">
+                        <div className="flex-1">
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Plantilla aprobada</label>
+                            <select
+                                value={selectedName}
+                                onChange={(e) => setSelectedName(e.target.value)}
+                                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-[#00811A] focus:ring-1 focus:ring-[#00811A]/20 transition-colors"
+                            >
+                                <option value="">— Seleccionar plantilla —</option>
+                                {metaTemplates.map((t) => (
+                                    <option key={t.id} value={t.name}>
+                                        {t.name} ({t.language || 'es'})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <button
+                            onClick={handleSave}
+                            disabled={!isDirty || saving}
+                            className="px-4 py-2 text-sm bg-[#00811A] text-white rounded-lg hover:bg-[#006615] disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
+                        >
+                            {saving ? 'Guardando...' : 'Guardar'}
+                        </button>
+                    </div>
+
+                    {currentDefault && (
+                        <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#00811A]"></span>
+                            Actual: <span className="font-medium text-gray-600">{currentDefault}</span>
+                        </div>
+                    )}
+
+                    {previewText && (
+                        <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Vista previa</label>
+                            <div className="bg-green-bubble rounded-xl rounded-tr-sm px-4 py-3 max-w-md shadow-xs">
+                                <p className="text-sm text-gray-800 whitespace-pre-wrap">{previewText}</p>
+                                <div className="text-right mt-1">
+                                    <span className="text-[10px] text-gray-400">12:00 PM ✓✓</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

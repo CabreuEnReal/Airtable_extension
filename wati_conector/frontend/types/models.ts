@@ -12,26 +12,91 @@ export type MessageStatus =
 
 export type ReadStatus = 'unread' | 'read';
 
-export type ConversationFilter = 'all' | 'open' | 'unread' | 'pending';
+export type ConversationFilter = 'all' | 'leads' | 'contacts' | 'opportunities' | 'open' | 'unread';
 
 export interface Contact {
-    id: string;
+    id: string;                    // Airtable record ID (recXXXX)
+    dbContactId?: number;         // ← Backend DB ID for API calls (42)
     displayName: string;
     firstName: string;
     lastName: string;
     email: string;
     phone: string;
     company: string;
-    leadCode: string;
-    leadId: string;
-    leadSource: string;
+    jobTitle: string;
+    department: string;
     stage: string;
-    stageStatus: string;
-    lastStageStatus: string;
-    businessUnit: string;
-    requestDate: string;
-    tags: string[];
+    leadCode: string;
+    leadSource: string;
+    industry: string;
+    ownerId: string;
+    ownerName: string;
+    contactType: 'lead' | 'contact' | 'opportunity';
     avatarUrl?: string;
+    // ─── Contextual metadata (optional, for chat sidebar context) ────
+    // Shared
+    keyAccount?: boolean;
+    products?: string[];
+    isClient?: boolean;
+    linkedInSummary?: string;
+    // Lead-specific
+    callInsights?: string;
+    becameSQL?: boolean;
+    companyDescription?: string;
+    cltvTotal?: number;
+    // Contact-specific
+    isMainContact?: boolean;
+    decisionLevel?: number;
+    linkedIn?: string;
+    partnerType?: string;
+    airtableContactType?: string;
+    sponsorIn?: string[];
+    powerSponsorIn?: string[];
+    // Opportunity-specific
+    closingEscenario?: string;
+    totalInstallPower?: string;
+    financeScheme?: string[];
+    internalProgress?: string;
+    sharepointUrl?: string;
+    priority?: string;
+    cltv?: number;
+    lastDoneActivity?: string;
+    siteNames?: string[];
+    linkedContactIds?: string[];
+    sponsorIds?: string[];
+    powerSponsorIds?: string[];
+}
+
+export interface Lead {
+    id: string;
+    leadId: number;
+    firstName: string;
+    lastName: string;
+    fullName: string;
+    phone: string;
+    email: string;
+    leadCode: string;
+    jobTitle: string;
+    companyName: string;
+    industry: string;
+    stage: string;
+    ownerId: string;
+    leadSource: string;
+    requestDate: string;
+    firstContactDate: string;
+    callInsights: string;
+    notViableReason: string[];
+}
+
+export interface Interaction {
+    id: string;
+    name: string;
+    type: string[];
+    dateExecuted: string;
+    notes: string;
+    team: string[];
+    accountId: string;
+    contactId: string;
 }
 
 export interface Message {
@@ -42,6 +107,8 @@ export interface Message {
     status: MessageStatus;
     readStatus: ReadStatus;
     contactId: string;
+    airtableContactId?: string | null;
+    phone?: string;
     contactPhone: string;
     fromNumber: string;
     toNumber: string;
@@ -49,6 +116,7 @@ export interface Message {
     attachments: Attachment[];
     isOptimistic?: boolean;
     mediaUnavailable?: boolean;
+    conversationActive?: boolean;
 }
 
 export interface Attachment {

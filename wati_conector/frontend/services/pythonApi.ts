@@ -1,6 +1,6 @@
 import { PYTHON_API, setApiConfig } from '../constants/config';
 import type {
-    ApiContactOut, ApiMessageOut, ApiTemplateOut, ApiPhoneNumber,
+    ApiContactOut, ApiContactsStatus, ApiMessageOut, ApiTemplateOut, ApiPhoneNumber,
     ApiSendMessageRequest,
     ApiSendMessageResponse,
     ApiAirtableTemplateOut,
@@ -10,8 +10,17 @@ import type {
     ApiCreateAirtableTemplateRequest, 
     ApiUpdateAirtableTemplateRequest,
     ApiSendMediaRequest,
-    ApiUploadResponse
+    ApiUploadResponse,
+    ApiContactInteractionsResponse,
+    ApiNumberTemplatesResponse
 } from '../types/api';
+import type {
+    WhatsAppNumber,
+    NumberStats,
+    InboxStatus,
+    MessageInbox,
+    MessageWithNumber
+} from '../types/whatsapp';
 
 // ─── Low-level fetch ────────────────────────────────────────────────────────
 
@@ -58,8 +67,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
             headers: {
                 'X-API-Key': PYTHON_API.API_KEY,
                 'Content-Type': 'application/json',
-                'ngrok-skip-browser-warning': 'true',
-                'Connection': 'keep-alive',
+                // 'ngrok-skip-browser-warning': 'true', // Uncomment for local dev with ngrok
                 ...options.headers,
             },
         });
@@ -69,6 +77,24 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
         // Stream JSON parsing for faster response
         if (!res.ok) {
             const errorText = await res.text();
+            // Try to parse backend error JSON for user-friendly messages
+            try {
+                const errorJson = JSON.parse(errorText);
+                // FastAPI wraps errors in { detail: { message: "..." } } or { detail: "string" }
+                const detail = errorJson.detail;
+                if (detail?.message) {
+                    throw new Error(detail.message);
+                } else if (typeof detail === 'string') {
+                    throw new Error(detail);
+                } else if (errorJson.message) {
+                    throw new Error(errorJson.message);
+                }
+            } catch (parseErr: any) {
+                // If we re-threw a user-friendly error, propagate it
+                if (parseErr.message && !parseErr.message.startsWith('JSON')) {
+                    throw parseErr;
+                }
+            }
             throw new Error(`API ${res.status}: ${errorText}`);
         }
 
@@ -113,19 +139,23 @@ export async function getDynamicApiConfig(): Promise<ApiConfigResponse> {
     ];
 
     for (const baseUrl of possibleUrls) {
+        console.log(`🔍 Trying config from: ${baseUrl}/api/config`);
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
 
             const response = await fetch(`${baseUrl}/api/config`, {
                 signal: controller.signal,
                 headers: {
                     'X-API-Key': PYTHON_API.API_KEY,
-                    'ngrok-skip-browser-warning': 'true',
+                    'Content-Type': 'application/json',
+                    // 'ngrok-skip-browser-warning': 'true', // Uncomment for local dev with ngrok
                 },
             });
 
             clearTimeout(timeoutId);
+
+            console.log(`📡 Response from ${baseUrl}: status=${response.status}`);
 
             if (response.ok) {
                 const config = await response.json();
@@ -137,9 +167,14 @@ export async function getDynamicApiConfig(): Promise<ApiConfigResponse> {
                 console.log('📡 API Configuration:', config);
                 
                 return config;
+            } else {
+                console.warn(`⚠ Non-OK response from ${baseUrl}: ${response.status} ${response.statusText}`);
             }
         } catch (error) {
             console.warn(`❌ Failed to get config from ${baseUrl}:`, error);
+            if (error instanceof Error) {
+                console.warn(`   Error name: ${error.name}, message: ${error.message}`);
+            }
             continue;
         }
     }
@@ -155,11 +190,11 @@ export async function checkHealth(): Promise<boolean> {
     
     try {
         const baseUrl = (PYTHON_API as any).BASE_URL || PYTHON_API.BASE_URL;
-    const res = await fetch(`${baseUrl}/health`, {
+        const res = await fetch(`${baseUrl}/health`, {
             signal: controller.signal,
-            headers: { 
-                'ngrok-skip-browser-warning': 'true',
-                'Connection': 'close', // Don't keep connection open for health check
+            headers: {
+                'X-API-Key': PYTHON_API.API_KEY,
+                // 'ngrok-skip-browser-warning': 'true', // Uncomment for local dev with ngrok
             },
         });
         
@@ -179,6 +214,10 @@ export async function checkHealth(): Promise<boolean> {
 }
 
 // ─── Contacts ───────────────────────────────────────────────────────────────
+
+export async function getApiContactsStatus(): Promise<ApiContactsStatus> {
+    return apiFetch<ApiContactsStatus>('/api/v1/contacts/status');
+}
 
 export async function getApiContacts(): Promise<ApiContactOut[]> {
     return apiFetch<ApiContactOut[]>('/api/v1/contacts');
@@ -216,6 +255,16 @@ export async function sendApiMessage(toNumber: string, textContent: string): Pro
     });
 }
 
+export async function markMessageAsRead(messageId: number): Promise<ApiMessageOut> {
+    return apiFetch<ApiMessageOut>(`/api/v1/messages/${messageId}/read`, {
+        method: 'PUT',
+    });
+}
+
+export async function markMessagesAsRead(messageIds: number[]): Promise<void> {
+    await Promise.all(messageIds.map((id) => markMessageAsRead(id)));
+}
+
 // ─── Templates (Unified) ───────────────────────────────────────────────────────
 
 export async function getApiTemplates(): Promise<ApiTemplateOut[]> {
@@ -232,13 +281,18 @@ export async function sendMetaTemplate(
     phoneNumber: string,
     parameters: string[] = [],
     language?: string,
+    phoneNumberId?: string | null,   // ✅ phone_number_id real de Meta (ej. "852930894563202")
 ): Promise<ApiSendMessageResponse> {
     const body: ApiSendTemplateRequest = {
         to_number: phoneNumber,
         template_name: templateName,
         language: language || 'es',
         parameters,
+        ...(phoneNumberId ? { from_phone_number_id: phoneNumberId } : {}),
     };
+    console.log('🔍 sendMetaTemplate payload:', JSON.stringify(body, null, 2));
+    console.log('🔍 Parameters being sent:', parameters);
+    console.log('🔍 from_phone_number_id:', phoneNumberId ?? 'not set (backend will use default)');
     return apiFetch<ApiSendMessageResponse>('/api/v1/messages/send-template', {
         method: 'POST',
         body: JSON.stringify(body),
@@ -278,10 +332,6 @@ export async function uploadFile(file: File): Promise<ApiUploadResponse> {
         baseUrl,
         uploadUrl,
         formDataEntries: Array.from(formData.entries()),
-        headers: {
-            'X-API-Key': PYTHON_API.API_KEY,
-            'ngrok-skip-browser-warning': 'true',
-        }
     });
 
     try {
@@ -290,7 +340,7 @@ export async function uploadFile(file: File): Promise<ApiUploadResponse> {
             method: 'POST',
             headers: {
                 'X-API-Key': PYTHON_API.API_KEY,
-                'ngrok-skip-browser-warning': 'true',
+                // 'ngrok-skip-browser-warning': 'true', // Uncomment for local dev with ngrok
             },
             body: formData,
         });
@@ -460,8 +510,121 @@ export async function deleteAirtableTemplate(id: string): Promise<void> {
     });
 }
 
+// ─── Default Template Config ────────────────────────────────────────────────
+
+export interface DefaultTemplateConfig {
+    template_name: string;
+    language: string;
+}
+
+export async function getDefaultTemplate(): Promise<DefaultTemplateConfig> {
+    return apiFetch<DefaultTemplateConfig>('/api/v1/config/default-template');
+}
+
+export async function setDefaultTemplate(templateName: string, language: string): Promise<DefaultTemplateConfig> {
+    return apiFetch<DefaultTemplateConfig>('/api/v1/config/default-template', {
+        method: 'PUT',
+        body: JSON.stringify({ template_name: templateName, language }),
+    });
+}
+
 // ─── Meta Phone Numbers ─────────────────────────────────────────────────────
 
 export async function getMetaPhoneNumbers(): Promise<ApiPhoneNumber[]> {
     return apiFetch<ApiPhoneNumber[]>('/api/v1/meta/phone-numbers');
+}
+
+// ─── WhatsApp Multi-Number Management ───────────────────────────────────────
+
+export async function getWhatsAppNumbers(): Promise<WhatsAppNumber[]> {
+    return apiFetch<WhatsAppNumber[]>('/api/v1/whatsapp/numbers');
+}
+
+// Force sync WhatsApp numbers with Meta API (use sparingly — on startup or manual refresh)
+export async function syncWhatsAppNumbers(): Promise<WhatsAppNumber[]> {
+    return apiFetch<WhatsAppNumber[]>('/api/v1/whatsapp/numbers/sync', {
+        method: 'POST',
+    });
+}
+
+export async function getWhatsAppNumberStats(phoneId: number): Promise<NumberStats> {
+    return apiFetch<NumberStats>(`/api/v1/whatsapp/numbers/${phoneId}/stats`);
+}
+
+export async function getInboxStatus(phoneId: number): Promise<InboxStatus> {
+    return apiFetch<InboxStatus>(`/api/v1/whatsapp/numbers/${phoneId}/inbox/status`);
+}
+
+export async function getInboxMessages(
+    phoneId: number, 
+    unreadOnly: boolean = false
+): Promise<MessageWithNumber[]> {
+    const query = unreadOnly ? '?unread_only=true' : '';
+    return apiFetch<MessageWithNumber[]>(`/api/v1/whatsapp/numbers/${phoneId}/inbox${query}`);
+}
+
+export async function markInboxMessageAsRead(phoneId: number, messageId: number): Promise<void> {
+    await apiFetch<unknown>(`/api/v1/whatsapp/numbers/${phoneId}/inbox/${messageId}/read`, {
+        method: 'PUT',
+    });
+}
+
+export async function bulkMarkInboxAsRead(phoneId: number, messageIds: number[]): Promise<{ status: string; updated: number }> {
+    return apiFetch<{ status: string; updated: number }>(`/api/v1/whatsapp/numbers/${phoneId}/inbox/read-bulk`, {
+        method: 'PUT',
+        body: JSON.stringify({ message_ids: messageIds }),
+    });
+}
+
+export async function assignMessageToAgent(
+    phoneId: number, 
+    messageId: number, 
+    agentName: string
+): Promise<void> {
+    await apiFetch<unknown>(`/api/v1/whatsapp/numbers/${phoneId}/inbox/${messageId}/assign?agent_name=${encodeURIComponent(agentName)}`, {
+        method: 'PUT',
+    });
+}
+
+// Enhanced send message with optional from_phone_number_id
+export async function sendApiMessageFromNumber(
+    toNumber: string,
+    textContent: string,
+    fromPhoneNumberId?: string
+): Promise<ApiSendMessageResponse> {
+    const body: any = {
+        to_number: toNumber,
+        text_content: textContent,
+    };
+    
+    if (fromPhoneNumberId) {
+        body.from_phone_number_id = fromPhoneNumberId;
+    }
+    
+    return apiFetch<ApiSendMessageResponse>('/api/v1/messages', {
+        method: 'POST',
+        body: JSON.stringify(body),
+    });
+}
+
+// ─── AI Interactions API ──────────────────────────────────────────────────
+
+export async function getContactInteractions(
+    contactId: number,
+    limit: number = 50
+): Promise<ApiContactInteractionsResponse> {
+    return apiFetch<ApiContactInteractionsResponse>(
+        `/api/v1/contacts/${contactId}/interactions?limit=${limit}`
+    );
+}
+
+// ─── Templates por número de WhatsApp ──────────────────────────────────────
+
+export async function getNumberTemplates(
+    numberId: number,
+    statusFilter: 'APPROVED' | 'PENDING' | 'ALL' = 'APPROVED'
+): Promise<ApiNumberTemplatesResponse> {
+    return apiFetch<ApiNumberTemplatesResponse>(
+        `/api/v1/whatsapp/numbers/${numberId}/templates?status_filter=${statusFilter}`
+    );
 }

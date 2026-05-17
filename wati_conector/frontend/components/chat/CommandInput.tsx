@@ -26,7 +26,14 @@ export function CommandSuggestions({
 }: CommandSuggestionsProps) {
     // Filter and rank suggestions based on query
     const getSuggestions = useCallback((searchQuery: string): CommandSuggestion[] => {
-        if (!searchQuery) return [];
+        // Show all templates when query is empty (user just typed "/")
+        if (!searchQuery) {
+            return templates.map(template => ({
+                template,
+                type: (template.source === 'meta' ? 'meta' : 'airtable') as 'meta' | 'airtable',
+                keywords: [],
+            })).slice(0, 8);
+        }
 
         const q = searchQuery.toLowerCase();
         const results: CommandSuggestion[] = [];
@@ -64,14 +71,14 @@ export function CommandSuggestions({
             }
         });
 
-        // Sort by score (descending) and limit to 6 results
+        // Sort by score (descending) and limit to 8 results
         return results
             .sort((a, b) => {
                 const scoreA = calculateScore(a.template, q);
                 const scoreB = calculateScore(b.template, q);
                 return scoreB - scoreA;
             })
-            .slice(0, 6);
+            .slice(0, 8);
     }, [templates]);
 
     const calculateScore = (template: Template, query: string): number => {
@@ -135,13 +142,15 @@ export function CommandSuggestions({
 
     return (
         <div 
-            className="absolute bottom-full left-0 right-0 mb-2 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10"
+            className="bg-white border border-gray-100 rounded-2xl shadow-xl overflow-hidden"
             onKeyDown={handleKeyDown}
         >
             {/* Header */}
-            <div className="px-3 py-2 bg-gray-50 border-b border-gray-200">
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <span>🔍</span>
+            <div className="px-4 py-2.5 border-b border-gray-100">
+                <div className="flex items-center gap-2 text-sm text-gray-500 font-medium">
+                    <svg className="w-4 h-4 text-[#00811A]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
                     <span>Plantillas encontradas</span>
                 </div>
             </div>
@@ -151,66 +160,57 @@ export function CommandSuggestions({
                 {suggestions.map((suggestion, index) => (
                     <div
                         key={`${suggestion.template.id}-${suggestion.type}`}
-                        className={`px-3 py-2 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors ${
+                        className={`cursor-pointer p-3 transition-colors flex flex-col gap-1 ${
                             index === selectedIndex
-                                ? 'bg-blue-50 border-l-2 border-l-blue-500'
-                                : 'hover:bg-gray-50'
+                                ? 'bg-[#00811A]/10 border-l-4 border-l-[#00811A]'
+                                : 'hover:bg-[#00811A]/5 active:bg-[#00811A]/10 border-l-4 border-l-transparent'
                         }`}
                         onClick={() => handleSuggestionClick(suggestion)}
                     >
-                        <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-sm">{getTypeIcon(suggestion.type)}</span>
-                                    <h4 className="font-medium text-gray-900 text-sm truncate">
-                                        {suggestion.template.name}
-                                    </h4>
-                                    <span className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${getTypeColor(suggestion.type)}`}>
-                                        {suggestion.type === 'meta' ? 'Meta' : 'Airtable'}
-                                    </span>
-                                </div>
-                                
-                                {/* Preview content */}
-                                {suggestion.template.content && (
-                                    <p className="text-xs text-gray-600 line-clamp-1 mb-1">
-                                        {suggestion.template.content}
-                                    </p>
-                                )}
-                                
-                                {/* Matching keywords */}
-                                {suggestion.keywords.length > 0 && (
-                                    <div className="flex flex-wrap gap-1">
-                                        {suggestion.keywords.map((keyword, i) => (
-                                            <span
-                                                key={i}
-                                                className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-500 rounded"
-                                            >
-                                                {keyword}
-                                            </span>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                            
-                            {/* Action hint */}
-                            <div className="text-xs text-gray-400 whitespace-nowrap">
-                                {suggestion.type === 'meta' ? '↗️' : '📝'}
-                            </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm">{getTypeIcon(suggestion.type)}</span>
+                            <h4 className="font-medium text-gray-900 text-sm truncate">
+                                {suggestion.template.name}
+                            </h4>
+                            <span className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${getTypeColor(suggestion.type)}`}>
+                                {suggestion.type === 'meta' ? 'Meta' : 'Airtable'}
+                            </span>
                         </div>
+                        
+                        {/* Preview content */}
+                        {suggestion.template.content && (
+                            <p className="text-xs text-gray-500 line-clamp-1 pl-6">
+                                {suggestion.template.content}
+                            </p>
+                        )}
+                        
+                        {/* Matching keywords */}
+                        {suggestion.keywords.length > 0 && (
+                            <div className="flex flex-wrap gap-1 pl-6">
+                                {suggestion.keywords.map((keyword, i) => (
+                                    <span
+                                        key={i}
+                                        className="px-1.5 py-0.5 text-xs bg-[#00811A]/5 text-[#00811A] rounded-md"
+                                    >
+                                        {keyword}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 ))}
             </div>
 
             {/* Footer */}
-            <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
-                <div className="flex justify-between items-center text-xs text-gray-500">
+            <div className="px-4 py-2 border-t border-gray-100 bg-gray-50/50">
+                <div className="flex justify-between items-center text-[11px] text-gray-400">
                     <div className="flex gap-3">
-                        <span>↑↓ Navegar</span>
-                        <span>Enter Seleccionar</span>
-                        <span>Esc Cancelar</span>
+                        <span className="flex items-center gap-1"><kbd className="px-1 py-0.5 bg-gray-100 rounded text-[10px]">↑↓</kbd> Navegar</span>
+                        <span className="flex items-center gap-1"><kbd className="px-1 py-0.5 bg-gray-100 rounded text-[10px]">↵</kbd> Seleccionar</span>
+                        <span className="flex items-center gap-1"><kbd className="px-1 py-0.5 bg-gray-100 rounded text-[10px]">Esc</kbd> Cancelar</span>
                     </div>
                     <div>
-                        <span>⚡ Meta envía | 📋 Airtable genera</span>
+                        <span>⚡ Meta envía · 📋 Airtable genera</span>
                     </div>
                 </div>
             </div>

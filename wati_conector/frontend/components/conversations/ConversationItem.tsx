@@ -30,6 +30,8 @@ export function ConversationItem({ conversation, isSelected, onClick }: Conversa
         ? formatRelativeTime(lastMessage.timestamp)
         : '';
 
+    const isClosedLost = contact.contactType === 'opportunity' && contact.closingEscenario === 'Closed Lost';
+
     return (
         <div
             onClick={onClick}
@@ -37,16 +39,31 @@ export function ConversationItem({ conversation, isSelected, onClick }: Conversa
                 ${isSelected
                     ? 'bg-green-selected'
                     : 'hover:bg-gray-25'
-                }`}
+                }
+                ${isClosedLost ? 'opacity-60' : ''}`}
         >
-            <Avatar name={contact.displayName} size="md" />
+            <div className="relative">
+                <Avatar name={contact.displayName} size="md" />
+                {!contact.phone && (
+                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold">
+                        !
+                    </div>
+                )}
+            </div>
 
             <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
-                    <span className={`text-sm truncate ${hasUnread || isSelected ? 'font-semibold' : ''} text-gray-800`}>
+                    <span className={`text-sm truncate ${hasUnread || isSelected ? 'font-semibold' : ''} ${isClosedLost ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
                         {contact.displayName}
                     </span>
-                    <span className="text-label text-gray-400 flex-shrink-0 ml-2">{timeLabel}</span>
+                    <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                        {isClosedLost && (
+                            <span className="text-[10px] font-medium bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">
+                                Closed Lost
+                            </span>
+                        )}
+                        <span className="text-label text-gray-400">{timeLabel}</span>
+                    </div>
                 </div>
                 <div className="flex items-center justify-between mt-0.5">
                     <span className={`text-xs truncate ${hasUnread ? 'text-gray-700' : 'text-gray-400'}`}>

@@ -6,9 +6,10 @@ interface TemplateSelectorProps {
     onSelectMeta: (template: Template, parameters: string[]) => void;
     onSelectAirtable: (template: Template) => void;
     onClose: () => void;
+    contact?: { displayName: string } | null;
 }
 
-export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, onClose }: TemplateSelectorProps) {
+export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, onClose, contact }: TemplateSelectorProps) {
     const [search, setSearch] = useState('');
     const [metaParamTemplate, setMetaParamTemplate] = useState<Template | null>(null);
     const [paramValues, setParamValues] = useState<string[]>([]);
@@ -29,6 +30,21 @@ export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, on
 
     const handleMetaClick = (t: Template) => {
         const count = t.parameterCount ?? 0;
+        
+        // Auto-fill parameters for any template with parameters
+        console.log('🔍 TemplateSelector - template:', t.name);
+        console.log('🔍 TemplateSelector - contact:', contact);
+        console.log('🔍 TemplateSelector - contact.displayName:', contact?.displayName);
+        console.log('🔍 TemplateSelector - parameterCount:', count);
+        
+        // Auto-fill with contact name for any template that has parameters
+        if (count >= 1 && contact?.displayName) {
+            const parameters = new Array(count).fill(contact.displayName);
+            console.log(`🔍 TemplateSelector: auto-filling ${count} parameters for ${t.name} with:`, parameters);
+            onSelectMeta(t, parameters);
+            return;
+        }
+        
         if (count > 0) {
             setMetaParamTemplate(t);
             setParamValues(new Array(count).fill(''));
@@ -48,7 +64,7 @@ export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, on
     if (metaParamTemplate) {
         const count = metaParamTemplate.parameterCount ?? 0;
         return (
-            <div className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-gray-200 rounded-xl shadow-modal max-h-[420px] flex flex-col overflow-hidden animate-slide-up z-30">
+            <div className="bg-white border border-gray-100 rounded-2xl shadow-xl max-h-[420px] flex flex-col overflow-hidden">
                 <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
                     <div className="flex items-center gap-2">
                         <button onClick={() => setMetaParamTemplate(null)} className="text-gray-400 hover:text-gray-600 text-sm">←</button>
@@ -92,13 +108,18 @@ export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, on
     const noResults = metaTemplates.length === 0 && airtableTemplates.length === 0;
 
     return (
-        <div className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-gray-200 rounded-xl shadow-modal max-h-[360px] flex flex-col overflow-hidden animate-slide-up z-30">
+        <div className="bg-white border border-gray-100 rounded-2xl shadow-xl max-h-[360px] flex flex-col overflow-hidden">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-                <h3 className="text-sm font-semibold text-gray-800">Plantillas</h3>
+                <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-[#00811A]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <h3 className="text-sm font-semibold text-gray-800">Plantillas</h3>
+                </div>
                 <button
                     onClick={onClose}
-                    className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-75 text-gray-400 text-sm"
+                    className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 text-sm transition-colors"
                 >
                     ✕
                 </button>
@@ -111,7 +132,7 @@ export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, on
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Buscar plantilla..."
-                    className="w-full px-3 py-1.5 text-body border border-gray-200 rounded-lg bg-gray-50 focus:outline-none focus:border-primary focus:bg-white"
+                    className="w-full px-3 py-1.5 text-body border border-gray-100 rounded-xl bg-gray-50 focus:outline-none focus:border-[#00811A]/30 focus:bg-white transition-colors"
                     autoFocus
                 />
             </div>
@@ -121,7 +142,7 @@ export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, on
                 {/* Meta templates group */}
                 {metaTemplates.length > 0 && (
                     <div>
-                        <div className="px-4 py-1.5 text-label text-gray-400 font-semibold bg-gray-50 uppercase flex items-center gap-1.5">
+                        <div className="px-4 py-2 text-[11px] text-[#00811A] font-semibold bg-[#00811A]/5 uppercase tracking-wider flex items-center gap-1.5">
                             <span>📱</span> INICIAR CONVERSACIÓN (Meta)
                         </div>
                         {metaTemplates.map((t) => (
@@ -133,7 +154,7 @@ export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, on
                 {/* Airtable templates group */}
                 {airtableTemplates.length > 0 && (
                     <div>
-                        <div className="px-4 py-1.5 text-label text-gray-400 font-semibold bg-gray-50 uppercase flex items-center gap-1.5">
+                        <div className="px-4 py-2 text-[11px] text-[#00811A] font-semibold bg-[#00811A]/5 uppercase tracking-wider flex items-center gap-1.5">
                             <span>⚡</span> RESPUESTAS RÁPIDAS (Airtable)
                         </div>
                         {airtableTemplates.map((t) => (
@@ -157,13 +178,13 @@ function MetaTemplateRow({ template, onClick }: { template: Template; onClick: (
     return (
         <button
             onClick={onClick}
-            className="w-full flex flex-col px-4 py-2.5 text-left hover:bg-gray-25 transition-colors border-b border-gray-100 last:border-0"
+            className="w-full flex flex-col px-4 py-2.5 text-left hover:bg-[#00811A]/5 active:bg-[#00811A]/10 transition-colors border-b border-gray-50 last:border-0"
         >
             <div className="flex items-center gap-2">
                 <span className="text-sm font-medium text-gray-800">{template.name}</span>
-                <span className="text-label text-primary font-mono">{template.language}</span>
+                <span className="text-[11px] text-[#00811A] font-mono">{template.language}</span>
                 {params > 0 && (
-                    <span className="text-label bg-primary-light text-primary px-1.5 py-0.5 rounded">{params} var</span>
+                    <span className="text-[11px] bg-[#00811A]/10 text-[#00811A] px-1.5 py-0.5 rounded-md">{params} var</span>
                 )}
             </div>
             <div className="flex items-center gap-2 mt-0.5">
@@ -182,12 +203,12 @@ function AirtableTemplateRow({ template, onClick }: { template: Template; onClic
     return (
         <button
             onClick={onClick}
-            className="w-full flex flex-col px-4 py-2.5 text-left hover:bg-gray-25 transition-colors border-b border-gray-100 last:border-0"
+            className="w-full flex flex-col px-4 py-2.5 text-left hover:bg-[#00811A]/5 active:bg-[#00811A]/10 transition-colors border-b border-gray-50 last:border-0"
         >
             <div className="flex items-center gap-2">
                 <span className="text-sm font-medium text-gray-800">{template.name}</span>
                 {template.category && (
-                    <span className="text-label text-gray-400">{template.category}</span>
+                    <span className="text-[11px] text-gray-400">{template.category}</span>
                 )}
             </div>
             {template.content && (
@@ -196,7 +217,7 @@ function AirtableTemplateRow({ template, onClick }: { template: Template; onClic
             {template.variables && template.variables.length > 0 && (
                 <div className="flex gap-1 mt-1 flex-wrap">
                     {template.variables.map((v) => (
-                        <span key={v} className="text-label bg-gray-75 text-gray-500 px-1.5 py-0.5 rounded font-mono">{`{{${v}}}`}</span>
+                        <span key={v} className="text-[11px] bg-[#00811A]/5 text-[#00811A] px-1.5 py-0.5 rounded-md font-mono">{`{{${v}}}`}</span>
                     ))}
                 </div>
             )}
