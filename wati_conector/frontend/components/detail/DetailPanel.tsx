@@ -1,9 +1,12 @@
-import { useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { Avatar } from '../common/Avatar';
 import { Badge } from '../common/Badge';
 import { IconButton } from '../common/IconButton';
+import { EmailPanel } from '../email/EmailPanel';
 import type { Contact, Message } from '../../types/models';
 import { formatPhone } from '../../utils/formatters';
+
+type ActiveTab = 'whatsapp' | 'email';
 
 interface DetailPanelProps {
     contact: Contact | null;
@@ -100,7 +103,6 @@ function LinkedContactCard({
             {contact.decisionLevel && (
                 <div className="text-xs text-gray-400 mt-0.5">Nivel decisión: {'⭐'.repeat(contact.decisionLevel)}</div>
             )}
-            {/* Start WhatsApp CTA */}
             {contact.phone && onStartWhatsApp && (
                 <button
                     onClick={() => onStartWhatsApp(contact.id)}
@@ -118,23 +120,53 @@ function LinkedContactCard({
     );
 }
 
-// ─── Main DetailPanel ───────────────────────────────────────────────────────
+// ─── Tab Bar ────────────────────────────────────────────────────────────────
 
-export function DetailPanel({
+function TabBar({ active, onChange }: { active: ActiveTab; onChange: (t: ActiveTab) => void }) {
+    const tabs: { id: ActiveTab; label: string; icon: string }[] = [
+        { id: 'whatsapp', label: 'WhatsApp', icon: '💬' },
+        { id: 'email',    label: 'Correo',   icon: '✉️' },
+    ];
+
+    return (
+        <div className="flex border-b border-gray-100 bg-white shrink-0">
+            {tabs.map(tab => (
+                <button
+                    key={tab.id}
+                    onClick={() => onChange(tab.id)}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors border-b-2 ${
+                        active === tab.id
+                            ? 'border-primary text-primary'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                    }`}
+                >
+                    <span>{tab.icon}</span>
+                    {tab.label}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+// ─── WhatsApp Tab Content (contact info & context) ──────────────────────────
+
+function WhatsAppTabContent({
     contact,
-    contacts = [],
-    messages,
+    contacts,
     onOpenNotes,
-    onOpenFiles,
-    onOpenDetail,
-    onClose,
     onSelectContact,
-}: DetailPanelProps) {
-    if (!contact) return null;
+}: {
+    contact: Contact;
+    contacts: Contact[];
+    onOpenNotes?: () => void;
+    onSelectContact?: (id: string) => void;
+}) {
+    const isLead = contact.contactType === 'lead';
+    const isContact = contact.contactType === 'contact';
+    const isOpportunity = contact.contactType === 'opportunity';
 
-    // ─── Resolve linked contacts for Opportunities ──────────────
     const linkedContacts = useMemo(() => {
-        if (contact.contactType !== 'opportunity' || contacts.length === 0) return [];
+        if (!isOpportunity || contacts.length === 0) return [];
 
         const mainIds = new Set(contact.linkedContactIds || []);
         const sponsorIds = new Set(contact.sponsorIds || []);
@@ -142,68 +174,24 @@ export function DetailPanel({
         const allIds = new Set([...mainIds, ...sponsorIds, ...powerSponsorIds]);
         if (allIds.size === 0) return [];
 
-        // Resolve to full Contact objects
         const resolved: { contact: Contact; role: string; priority: number }[] = [];
         for (const c of contacts) {
             if (!allIds.has(c.id)) continue;
-            // Determine highest-priority role
             let role = 'Participante';
             let priority = 4;
             if (c.isMainContact) { role = 'Main Contact'; priority = 1; }
             if (powerSponsorIds.has(c.id)) { role = 'Power Sponsor'; priority = 2; }
             else if (sponsorIds.has(c.id)) { role = 'Sponsor'; priority = 3; }
-            // Main Contact overrides if flagged
             if (c.isMainContact && priority > 1) { role = 'Main Contact'; priority = 1; }
             resolved.push({ contact: c, role, priority });
         }
-
         return resolved.sort((a, b) => a.priority - b.priority);
-    }, [contact, contacts]);
-
-    const isLead = contact.contactType === 'lead';
-    const isContact = contact.contactType === 'contact';
-    const isOpportunity = contact.contactType === 'opportunity';
-
-    const typeBadge = isLead ? 'Lead' : isContact ? 'Contacto' : 'Oportunidad';
-    const typeBadgeColor = isLead ? 'bg-blue-100 text-blue-700' : isContact ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700';
+    }, [contact, contacts, isOpportunity]);
 
     return (
-        <div className="w-detail flex flex-col border-l border-gray-100 bg-white overflow-y-auto">
-            {/* Close button */}
-            {onClose && (
-                <div className="flex justify-end px-3 pt-3">
-                    <IconButton icon="✕" label="Cerrar" size="sm" onClick={onClose} />
-                </div>
-            )}
-
-            {/* Avatar & Name */}
-            <div className="flex flex-col items-center px-4 pt-2 pb-3">
-                <Avatar name={contact.displayName} size="xl" />
-                <h3 className="text-card-heading font-semibold text-gray-800 mt-3 text-center">{contact.displayName}</h3>
-                {contact.company && (
-                    <span className="text-label text-gray-500 mt-0.5">{contact.company}</span>
-                )}
-                <div className="flex items-center gap-2 mt-2">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${typeBadgeColor}`}>{typeBadge}</span>
-                    {contact.keyAccount && (
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">⭐ Key Account</span>
-                    )}
-                    {contact.isClient && (
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">Cliente</span>
-                    )}
-                </div>
-            </div>
-
-            {/* Action Buttons */}
-            {contact.phone && (
-                <div className="flex justify-center gap-3 px-4 pb-3">
-                    <IconButton icon="📱" label="WhatsApp" variant="outline" />
-                    <IconButton icon="✉️" label="Email" variant="outline" />
-                </div>
-            )}
-
+        <div className="overflow-y-auto h-full">
             {/* Contact Info */}
-            <div className="px-4 py-3 border-t border-gray-100">
+            <div className="px-4 py-3 border-b border-gray-100">
                 <SectionHeader title="INFORMACIÓN DE CONTACTO" />
                 <InfoRow label="Teléfono" value={formatPhone(contact.phone)} />
                 <InfoRow label="Email" value={contact.email} isLink />
@@ -215,10 +203,10 @@ export function DetailPanel({
                 )}
             </div>
 
-            {/* ─── LEAD-SPECIFIC CONTEXT ──────────────────────────── */}
+            {/* Lead context */}
             {isLead && (
                 <>
-                    <div className="px-4 py-3 border-t border-gray-100">
+                    <div className="px-4 py-3 border-b border-gray-100">
                         <SectionHeader title="CONTEXTO DEL LEAD" />
                         <div className="flex justify-between py-1.5">
                             <span className="text-label text-gray-400">Stage</span>
@@ -233,9 +221,8 @@ export function DetailPanel({
                             <InfoRow label="CLTV Total" value={`$${contact.cltvTotal.toLocaleString()}`} />
                         )}
                     </div>
-                    {/* Seller Prep */}
                     {(contact.callInsights || contact.linkedInSummary || contact.companyDescription) && (
-                        <div className="px-4 py-3 border-t border-gray-100">
+                        <div className="px-4 py-3 border-b border-gray-100">
                             <SectionHeader title="PREPARACIÓN PARA CONTACTO" />
                             {contact.callInsights && (
                                 <div className="py-1.5">
@@ -260,9 +247,9 @@ export function DetailPanel({
                 </>
             )}
 
-            {/* ─── CONTACT-SPECIFIC CONTEXT ───────────────────────── */}
+            {/* Contact-specific context */}
             {isContact && (
-                <div className="px-4 py-3 border-t border-gray-100">
+                <div className="px-4 py-3 border-b border-gray-100">
                     <SectionHeader title="ROL Y CONTEXTO" />
                     {contact.airtableContactType && (
                         <InfoRow label="Tipo de contacto" value={contact.airtableContactType} />
@@ -277,7 +264,6 @@ export function DetailPanel({
                     <FlagRow label="Es cliente" value={contact.isClient} />
                     {contact.partnerType && <InfoRow label="Tipo de partner" value={contact.partnerType} />}
                     {contact.ownerName && <InfoRow label="Account Owner" value={contact.ownerName} />}
-                    {/* LinkedIn prep */}
                     {contact.linkedInSummary && (
                         <div className="py-1.5">
                             <span className="text-label text-gray-400 block mb-1">LinkedIn Summary</span>
@@ -293,10 +279,10 @@ export function DetailPanel({
                 </div>
             )}
 
-            {/* ─── OPPORTUNITY-SPECIFIC CONTEXT ───────────────────── */}
+            {/* Opportunity context */}
             {isOpportunity && (
                 <>
-                    <div className="px-4 py-3 border-t border-gray-100">
+                    <div className="px-4 py-3 border-b border-gray-100">
                         <SectionHeader title="CONTEXTO DEL DEAL" />
                         <div className="flex justify-between py-1.5">
                             <span className="text-label text-gray-400">Pipeline Stage</span>
@@ -317,9 +303,7 @@ export function DetailPanel({
                             <InfoRow label="Sharepoint" value="Abrir repositorio" isLink href={contact.sharepointUrl} />
                         )}
                     </div>
-
-                    {/* Linked Contacts */}
-                    <div className="px-4 py-3 border-t border-gray-100">
+                    <div className="px-4 py-3 border-b border-gray-100">
                         <SectionHeader title={`CONTACTOS VINCULADOS (${linkedContacts.length})`} />
                         {linkedContacts.length === 0 && (
                             <p className="text-xs text-gray-400">Sin contactos vinculados a esta oportunidad</p>
@@ -336,8 +320,8 @@ export function DetailPanel({
                 </>
             )}
 
-            {/* Notes Preview */}
-            <div className="px-4 py-3 border-t border-gray-100">
+            {/* Notes */}
+            <div className="px-4 py-3">
                 <div className="flex items-center justify-between mb-2">
                     <SectionHeader title="NOTAS" />
                 </div>
@@ -348,6 +332,96 @@ export function DetailPanel({
                     >
                         + Agregar nota
                     </button>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// ─── Main DetailPanel ───────────────────────────────────────────────────────
+
+export function DetailPanel({
+    contact,
+    contacts = [],
+    messages,
+    onOpenNotes,
+    onOpenFiles,
+    onOpenDetail,
+    onClose,
+    onSelectContact,
+}: DetailPanelProps) {
+    const [activeTab, setActiveTab] = useState<ActiveTab>('whatsapp');
+
+    if (!contact) return null;
+
+    const isLead = contact.contactType === 'lead';
+    const isContact = contact.contactType === 'contact';
+    const typeBadgeColor = isLead
+        ? 'bg-blue-100 text-blue-700'
+        : isContact
+        ? 'bg-green-100 text-green-700'
+        : 'bg-purple-100 text-purple-700';
+    const typeBadgeLabel = isLead ? 'Lead' : isContact ? 'Contacto' : 'Oportunidad';
+
+    return (
+        <div className="w-detail flex flex-col border-l border-gray-100 bg-white overflow-hidden">
+            {/* ── Top header — only shown in WhatsApp tab ── */}
+            {activeTab === 'whatsapp' && (
+                <div className="shrink-0">
+                    {onClose && (
+                        <div className="flex justify-end px-3 pt-3">
+                            <IconButton icon="✕" label="Cerrar" size="sm" onClick={onClose} />
+                        </div>
+                    )}
+
+                    <div className="flex flex-col items-center px-4 pt-2 pb-3">
+                        <Avatar name={contact.displayName} size="xl" />
+                        <h3 className="text-card-heading font-semibold text-gray-800 mt-3 text-center">
+                            {contact.displayName}
+                        </h3>
+                        {contact.company && (
+                            <span className="text-label text-gray-500 mt-0.5">{contact.company}</span>
+                        )}
+                        <div className="flex items-center gap-2 mt-2 flex-wrap justify-center">
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${typeBadgeColor}`}>
+                                {typeBadgeLabel}
+                            </span>
+                            {contact.keyAccount && (
+                                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">
+                                    ⭐ Key Account
+                                </span>
+                            )}
+                            {contact.isClient && (
+                                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                                    Cliente
+                                </span>
+                            )}
+                        </div>
+                    </div>
+
+                    {contact.phone && (
+                        <div className="flex justify-center gap-3 px-4 pb-3">
+                            <IconButton icon="📱" label="WhatsApp" variant="outline" />
+                            <IconButton icon="✉️" label="Email" variant="outline" />
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ── Tab bar ── */}
+            <TabBar active={activeTab} onChange={setActiveTab} />
+
+            {/* ── Tab content ── */}
+            <div className="flex-1 overflow-hidden">
+                {activeTab === 'whatsapp' ? (
+                    <WhatsAppTabContent
+                        contact={contact}
+                        contacts={contacts}
+                        onOpenNotes={onOpenNotes}
+                        onSelectContact={onSelectContact}
+                    />
+                ) : (
+                    <EmailPanel contactEmail={contact.email} />
                 )}
             </div>
         </div>

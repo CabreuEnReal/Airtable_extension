@@ -184,6 +184,23 @@ export interface Template {
     variables?: string[];
 }
 
+// ─── Email (Microsoft Graph API shape) ─────────────────────────────────────
+
+export interface EmailMessage {
+    id: string;
+    subject: string;
+    bodyPreview: string;
+    body: string;
+    from: {
+        name: string;
+        email: string;
+    };
+    isRead: boolean;
+    receivedDateTime: string;
+    hasAttachments?: boolean;
+    replies?: EmailMessage[];
+}
+
 // ─── App-level state ────────────────────────────────────────────────────────
 
 export interface AppState {
