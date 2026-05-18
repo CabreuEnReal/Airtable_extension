@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useSession } from '@airtable/blocks/interface/ui';
 import type { EmailMessage, Notification } from '../../types/models';
-import { getMockEmails } from '../../utils/mockEmails';
 import { Avatar } from '../common/Avatar';
 import { EmptyState } from '../common/EmptyState';
 import { Spinner } from '../common/Spinner';
@@ -11,6 +11,10 @@ interface EmailPanelProps {
 }
 
 const ME = { name: 'Carlos Abreu', email: 'carlosa@energiareal.mx' };
+
+const N8N_LOGIN_URL      = 'https://n8n.energiareal.mx/webhook-test/oauth/login';
+const N8N_GET_EMAILS_URL = 'https://n8n.energiareal.mx/webhook/get-emails';
+const N8N_SEND_EMAIL_URL = 'https://n8n.energiareal.mx/webhook/send-email';
 
 function formatEmailDate(dateStr: string): string {
     const date = new Date(dateStr);
@@ -131,12 +135,12 @@ function ThreadView({
     email,
     contactEmail,
     onBack,
-    onAddReply,
+    onSendReply,
 }: {
     email: EmailMessage;
     contactEmail: string;
     onBack: () => void;
-    onAddReply: (reply: EmailMessage) => void;
+    onSendReply: (replyText: string) => Promise<void>;
 }) {
     const [replyText, setReplyText] = useState('');
     const [isSending, setIsSending] = useState(false);
@@ -148,25 +152,15 @@ function ThreadView({
 
     async function handleSend() {
         if (!replyText.trim() || isSending) return;
-
         setIsSending(true);
-
-        const newReply: EmailMessage = {
-            id: `reply-${Date.now()}`,
-            subject: `RE: ${email.subject}`,
-            bodyPreview: replyText.slice(0, 100),
-            body: replyText,
-            from: ME,
-            isRead: true,
-            receivedDateTime: new Date().toISOString(),
-            hasAttachments: false,
-        };
-
-        await new Promise<void>(res => setTimeout(res, 1000));
-
-        onAddReply(newReply);
-        setReplyText('');
-        setIsSending(false);
+        try {
+            await onSendReply(replyText);
+            setReplyText('');
+        } catch {
+            // parent already shows error Toast
+        } finally {
+            setIsSending(false);
+        }
     }
 
     function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -244,29 +238,172 @@ function ThreadView({
 // ─── Main EmailPanel ─────────────────────────────────────────────────────────
 
 export function EmailPanel({ contactEmail }: EmailPanelProps) {
+    const session = useSession();
+    const userId = session?.currentUser?.id;
+    const popupRef = useRef<Window | null>(null);
+
     const [isMsConnected, setIsMsConnected] = useState(false);
     const [isConnecting, setIsConnecting] = useState(false);
+    const [isLoadingEmails, setIsLoadingEmails] = useState(false);
     const [emails, setEmails] = useState<EmailMessage[]>([]);
     const [selectedEmail, setSelectedEmail] = useState<EmailMessage | null>(null);
     const [notification, setNotification] = useState<Notification | null>(null);
 
-    // Reset when contact changes
-    useEffect(() => {
-        setEmails(contactEmail ? getMockEmails(contactEmail) : []);
-        setSelectedEmail(null);
-    }, [contactEmail]);
+    async function loadEmails() {
+        if (!userId || !contactEmail) return;
+        setIsLoadingEmails(true);
+        try {
+            const res = await fetch(
+                `${N8N_GET_EMAILS_URL}?airtableUserId=${encodeURIComponent(userId)}&contactEmail=${encodeURIComponent(contactEmail)}`
+            );
+            if (res.status === 401) {
+                setIsMsConnected(false);
+                setEmails([]);
+                return;
+            }
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const newEmails: EmailMessage[] = data.emails ?? [];
+            setEmails(newEmails);
+            setIsMsConnected(true);
+            // Keep selectedEmail in sync if user is in thread view
+            setSelectedEmail(prev =>
+                prev ? (newEmails.find(e => e.id === prev.id) ?? null) : null
+            );
+        } catch {
+            setNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                text: 'Error al cargar los correos.',
+            });
+        } finally {
+            setIsLoadingEmails(false);
+        }
+    }
 
-    async function handleConnectAccount() {
+    // Auto-load when contact or user changes
+    useEffect(() => {
+        if (userId && contactEmail) {
+            loadEmails();
+        } else {
+            setEmails([]);
+            setSelectedEmail(null);
+        }
+    }, [userId, contactEmail]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Global postMessage listener — re-registered when userId/contactEmail change
+    // so the closure always captures fresh values for loadEmails
+    useEffect(() => {
+        const handleMessage = (event: MessageEvent) => {
+            if (!event?.data?.type) return;
+            const { type } = event.data;
+
+            if (type === 'OAUTH_SUCCESS') {
+                setIsConnecting(false);
+                loadEmails();
+                if (popupRef.current) {
+                    popupRef.current.close();
+                    popupRef.current = null;
+                }
+            } else if (type === 'OAUTH_ERROR' || type === 'OAUTH_DENIED') {
+                setIsConnecting(false);
+                setNotification({
+                    id: Date.now().toString(),
+                    type: 'error',
+                    text: 'Autorización cancelada o fallida',
+                });
+                if (popupRef.current) {
+                    popupRef.current.close();
+                    popupRef.current = null;
+                }
+            }
+        };
+
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, [userId, contactEmail]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    function handleConnectAccount() {
+        if (!userId) {
+            setNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                text: 'Error: No se pudo identificar tu usuario.',
+            });
+            return;
+        }
         setIsConnecting(true);
-        await new Promise<void>(res => setTimeout(res, 2000));
-        setIsConnecting(false);
-        setIsMsConnected(true);
+        const w = 600, h = 700;
+        const left = window.screenX + (window.outerWidth - w) / 2;
+        const top = window.screenY + (window.outerHeight - h) / 2;
+        const popup = window.open(
+            `${N8N_LOGIN_URL}?airtableUserId=${encodeURIComponent(userId)}`,
+            'MicrosoftAuth',
+            `width=${w},height=${h},left=${left},top=${top},popup=yes`
+        );
+        if (!popup) {
+            setIsConnecting(false);
+            setNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                text: 'El navegador bloqueó la ventana emergente. Por favor, permítelas.',
+            });
+            return;
+        }
+        popupRef.current = popup;
+    }
+
+    async function handleSendReply(replyText: string): Promise<void> {
+        if (!selectedEmail || !userId || !contactEmail) return;
+
+        const res = await fetch(N8N_SEND_EMAIL_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                airtableUserId: userId,
+                toEmail: contactEmail,
+                subject: `RE: ${selectedEmail.subject}`,
+                bodyText: replyText,
+            }),
+        });
+
+        if (!res.ok) {
+            setNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                text: 'Error al enviar el correo. Intenta de nuevo.',
+            });
+            throw new Error(`HTTP ${res.status}`);
+        }
+
+        // Optimistic update — show reply immediately without waiting for Microsoft
+        const optimisticReply: EmailMessage = {
+            id: `temp-${Date.now()}`,
+            subject: selectedEmail.subject,
+            bodyPreview: replyText,
+            body: replyText,
+            from: { name: 'Yo', email: session?.currentUser?.email ?? '' },
+            isRead: true,
+            receivedDateTime: new Date().toISOString(),
+        };
+        const updatedEmail: EmailMessage = {
+            ...selectedEmail,
+            replies: [...(selectedEmail.replies ?? []), optimisticReply],
+        };
+        setSelectedEmail(updatedEmail);
+        setEmails(prev => prev.map(e => (e.id === updatedEmail.id ? updatedEmail : e)));
+
         setNotification({
             id: Date.now().toString(),
             type: 'success',
-            text: 'Cuenta de Microsoft vinculada exitosamente',
+            text: 'Correo enviado exitosamente',
         });
+
+        // Deferred re-fetch — gives Microsoft time to index the sent message
+        setTimeout(() => { loadEmails(); }, 3000); // eslint-disable-line react-hooks/exhaustive-deps
     }
+
+    // ── Guards ────────────────────────────────────────────────────────────────
 
     if (!contactEmail) {
         return (
@@ -275,6 +412,15 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
                 title="Sin correo vinculado"
                 description="Este contacto no tiene dirección de correo. Actualiza el registro en Airtable para habilitar esta función."
             />
+        );
+    }
+
+    // Spinner on first load before auth state is known
+    if (isLoadingEmails && !isMsConnected && emails.length === 0) {
+        return (
+            <div className="flex items-center justify-center h-full">
+                <Spinner size="md" label="Verificando conexión..." />
+            </div>
         );
     }
 
@@ -324,6 +470,15 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
         );
     }
 
+    // Spinner while refreshing after auth (emails not yet loaded)
+    if (isLoadingEmails && emails.length === 0) {
+        return (
+            <div className="flex items-center justify-center h-full">
+                <Spinner size="md" label="Cargando correos..." />
+            </div>
+        );
+    }
+
     if (emails.length === 0) {
         return (
             <EmptyState
@@ -334,27 +489,6 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
         );
     }
 
-    function handleAddReply(newReply: EmailMessage) {
-        if (!selectedEmail) return;
-
-        const targetId = selectedEmail.id;
-
-        const updatedEmail: EmailMessage = {
-            ...selectedEmail,
-            replies: [...(selectedEmail.replies ?? []), newReply],
-        };
-
-        setEmails(prev =>
-            prev.map(e => (e.id === targetId ? updatedEmail : e))
-        );
-        setSelectedEmail(updatedEmail);
-        setNotification({
-            id: Date.now().toString(),
-            type: 'success',
-            text: 'Correo enviado exitosamente',
-        });
-    }
-
     // Thread view
     if (selectedEmail !== null) {
         return (
@@ -363,7 +497,7 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
                     email={selectedEmail}
                     contactEmail={contactEmail}
                     onBack={() => setSelectedEmail(null)}
-                    onAddReply={handleAddReply}
+                    onSendReply={handleSendReply}
                 />
                 <Toast
                     notification={notification}
@@ -376,21 +510,29 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
 
     // List view
     return (
-        <div className="flex flex-col h-full overflow-hidden">
-            <div className="px-4 py-2 border-b border-gray-100 shrink-0 bg-gray-50">
-                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
-                    Correos ({emails.length})
-                </span>
+        <>
+            <div className="flex flex-col h-full overflow-hidden">
+                <div className="px-4 py-2 border-b border-gray-100 shrink-0 bg-gray-50 flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+                        Correos ({emails.length})
+                    </span>
+                    {isLoadingEmails && <Spinner size="sm" />}
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                    {emails.map(email => (
+                        <EmailListItem
+                            key={email.id}
+                            email={email}
+                            onClick={() => setSelectedEmail(email)}
+                        />
+                    ))}
+                </div>
             </div>
-            <div className="flex-1 overflow-y-auto">
-                {emails.map(email => (
-                    <EmailListItem
-                        key={email.id}
-                        email={email}
-                        onClick={() => setSelectedEmail(email)}
-                    />
-                ))}
-            </div>
-        </div>
+            <Toast
+                notification={notification}
+                onDismiss={() => setNotification(null)}
+                duration={3000}
+            />
+        </>
     );
 }
