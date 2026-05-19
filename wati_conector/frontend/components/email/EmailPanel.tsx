@@ -12,7 +12,7 @@ interface EmailPanelProps {
 
 const ME = { name: 'Carlos Abreu', email: 'carlosa@energiareal.mx' };
 
-const N8N_LOGIN_URL      = 'https://n8n.energiareal.mx/webhook-test/oauth/login';
+const N8N_LOGIN_URL      = 'https://n8n.energiareal.mx/webhook/oauth/login';
 const N8N_GET_EMAILS_URL = 'https://n8n.energiareal.mx/webhook/get-emails';
 const N8N_SEND_EMAIL_URL = 'https://n8n.energiareal.mx/webhook/send-email';
 
