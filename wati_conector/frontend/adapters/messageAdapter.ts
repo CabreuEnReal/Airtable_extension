@@ -162,6 +162,7 @@ export function adaptMessageWithNumber(raw: MessageWithNumber): Message {
         status: mapStatus(raw.status),
         readStatus,
         contactId: String(raw.contact_id),
+        dbContactId: raw.contact_id,
         airtableContactId: raw.contact_airtable_id ?? null,
         phone: raw.contact_phone ?? '',
         contactPhone: raw.contact_phone || raw.from_number || '',

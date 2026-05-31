@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useMediaBlobUrl } from '../../utils/useMediaBlobUrl';
 
 interface VoiceNotePlayerProps {
     url: string;
@@ -13,6 +14,7 @@ function formatTime(seconds: number): string {
 }
 
 export function VoiceNotePlayer({ url, isVoice = false }: VoiceNotePlayerProps) {
+    const { blobUrl, loading: blobLoading, error: blobError } = useMediaBlobUrl(url);
     const audioRef = useRef<HTMLAudioElement>(null);
     const [playing, setPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
@@ -112,7 +114,7 @@ export function VoiceNotePlayer({ url, isVoice = false }: VoiceNotePlayerProps) 
 
     const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
-    if (error) {
+    if (error || blobError) {
         return (
             <div
                 className="mt-2 flex items-center gap-2 px-3 py-2.5 rounded-xl bg-black/5"
@@ -134,7 +136,7 @@ export function VoiceNotePlayer({ url, isVoice = false }: VoiceNotePlayerProps) 
             onClick={(e) => e.stopPropagation()}
         >
             {/* Hidden audio element */}
-            <audio ref={audioRef} src={url} preload="metadata" />
+            <audio ref={audioRef} src={blobUrl ?? undefined} preload="metadata" />
 
             {/* Play/Pause Button */}
             <button

@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import type { Message } from '../../types/models';
 import { formatTime } from '../../utils/formatters';
 import { AttachmentPreview } from './AttachmentPreview';
 import { resolveMediaUrl } from '../../adapters/messageAdapter';
 import { convertEmoticonsToEmoji, isOnlyEmoji } from '../../utils/emoji';
+import { PYTHON_API } from '../../constants/config';
+import { useMediaBlobUrl } from '../../utils/useMediaBlobUrl';
 
 interface MessageBubbleProps {
     message: Message;
@@ -37,98 +39,13 @@ function formatDisplayText(text: string): { display: string; isTemplate: boolean
 export function MessageBubble({ message, contactName, onRetryMedia }: MessageBubbleProps) {
     const [retrying, setRetrying] = useState(false);
     const [previewModal, setPreviewModal] = useState<{ url: string; name: string; type: string } | null>(null);
-    const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
-    const [pdfLoading, setPdfLoading] = useState(false);
+    const { blobUrl: previewBlobUrl, loading: previewBlobLoading } = useMediaBlobUrl(previewModal?.url ?? '');
     const isOut = message.direction === 'outbound';
     const { display: rawDisplay, isTemplate } = formatDisplayText(message.text || '');
     // Convert text emoticons (:-D, :), etc.) to Unicode emojis for display
     const display = convertEmoticonsToEmoji(rawDisplay);
     // Show emoji-only messages larger (WhatsApp-style)
     const emojiOnly = !isTemplate && isOnlyEmoji(display);
-
-    // Load PDF as blob when preview modal opens (only for ngrok URLs)
-    useEffect(() => {
-        if (!previewModal || previewModal.type !== 'application/pdf') {
-            if (pdfBlobUrl) {
-                URL.revokeObjectURL(pdfBlobUrl);
-                setPdfBlobUrl(null);
-            }
-            return;
-        }
-        let cancelled = false;
-        setPdfLoading(true);
-        
-        // For Azure URLs, use direct URL in iframe (no fetch needed due to CORS)
-        // For ngrok URLs, fetch as blob with headers
-        const isNgrokUrl = previewModal.url.includes('ngrok-free.dev');
-        
-        if (isNgrokUrl) {
-            // Fetch ngrok URLs as blob (requires headers)
-            const headers: Record<string, string> = { 'ngrok-skip-browser-warning': 'true' };
-            
-            fetch(previewModal.url, { headers })
-                .then(res => {
-                    console.log('PDF fetch response (ngrok):', {
-                        status: res.status,
-                        ok: res.ok,
-                        url: previewModal.url
-                    });
-                    if (!res.ok) throw new Error(`Failed to fetch PDF: ${res.status} ${res.statusText}`);
-                    return res.blob();
-                })
-                .then(blob => {
-                    console.log('PDF blob created (ngrok):', {
-                        size: blob.size,
-                        type: blob.type
-                    });
-                    if (cancelled) return;
-                    const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
-                    setPdfBlobUrl(url);
-                })
-                .catch((error) => {
-                    console.error('PDF fetch error (ngrok):', error);
-                    if (!cancelled) setPdfBlobUrl(null);
-                })
-                .finally(() => {
-                    if (!cancelled) setPdfLoading(false);
-                });
-        } else {
-            // For Azure URLs, try to fetch as blob (SAS tokens should allow this)
-            console.log('PDF attempting fetch (Azure):', previewModal.url);
-            fetch(previewModal.url)
-                .then(res => {
-                    console.log('Azure PDF fetch response:', {
-                        status: res.status,
-                        ok: res.ok,
-                        headers: Object.fromEntries(res.headers.entries())
-                    });
-                    if (!res.ok) throw new Error(`Azure PDF fetch failed: ${res.status} ${res.statusText}`);
-                    return res.blob();
-                })
-                .then(blob => {
-                    console.log('Azure PDF blob created:', {
-                        size: blob.size,
-                        type: blob.type
-                    });
-                    if (cancelled) return;
-                    const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
-                    setPdfBlobUrl(url);
-                })
-                .catch((error) => {
-                    console.error('Azure PDF fetch error:', error);
-                    // Fallback: try direct URL in iframe (might not work due to Azure policies)
-                    if (!cancelled) {
-                        console.log('Falling back to direct URL (might not work):');
-                        setPdfBlobUrl(previewModal.url);
-                    }
-                })
-                .finally(() => {
-                    if (!cancelled) setPdfLoading(false);
-                });
-        }
-        
-        return () => { cancelled = true; };
-    }, [previewModal?.url, previewModal?.type]);
 
     const handleDownload = async (url: string, filename: string, buttonElement?: HTMLButtonElement) => {
         try {
@@ -138,11 +55,13 @@ export function MessageBubble({ message, contactName, onRetryMedia }: MessageBub
                 buttonElement.textContent = '⬇ Descargando...';
             }
 
-            // Determine if we need ngrok headers (only for ngrok URLs)
-            const isNgrokUrl = url.includes('ngrok-free.dev');
-            const headers: Record<string, string> = isNgrokUrl ? { 'ngrok-skip-browser-warning': 'true' } : {};
-            
-            // Fetch the file
+            const isProxy = url.includes('/api/v1/media/');
+            const isNgrok = url.includes('ngrok-free.dev');
+            const headers: Record<string, string> = {
+                ...(isProxy ? { 'X-API-Key': PYTHON_API.API_KEY } : {}),
+                ...(isNgrok ? { 'ngrok-skip-browser-warning': 'true' } : {}),
+            };
+
             const response = await fetch(url, { headers });
             if (!response.ok) throw new Error('Failed to download file');
             
@@ -312,26 +231,26 @@ export function MessageBubble({ message, contactName, onRetryMedia }: MessageBub
                         </div>
                     </div>
                     <div className={`overflow-auto ${previewModal.type === 'application/pdf' ? 'h-[calc(90vh-52px)]' : 'p-4 max-h-[70vh]'}`}>
-                        {previewModal.type.startsWith('image/') ? (
-                            <img 
-                                src={previewModal.url} 
+                        {previewBlobLoading ? (
+                            <div className="flex items-center justify-center h-full min-h-[200px]">
+                                <div className="text-center">
+                                    <div className="animate-spin text-4xl mb-3">⏳</div>
+                                    <p className="text-gray-500">Cargando archivo...</p>
+                                </div>
+                            </div>
+                        ) : previewModal.type.startsWith('image/') ? (
+                            <img
+                                src={previewBlobUrl ?? undefined}
                                 alt={previewModal.name}
                                 className="max-w-full h-auto mx-auto"
                             />
                         ) : previewModal.type === 'application/pdf' ? (
-                            pdfBlobUrl ? (
+                            previewBlobUrl ? (
                                 <iframe
-                                    src={pdfBlobUrl}
+                                    src={previewBlobUrl}
                                     title={decodeURIComponent(previewModal.name)}
                                     className="w-full h-full border-0"
                                 />
-                            ) : pdfLoading ? (
-                                <div className="flex items-center justify-center h-full">
-                                    <div className="text-center">
-                                        <div className="animate-spin text-4xl mb-3">⏳</div>
-                                        <p className="text-gray-500">Cargando PDF...</p>
-                                    </div>
-                                </div>
                             ) : (
                                 <div className="flex items-center justify-center h-full">
                                     <div className="text-center">
@@ -347,14 +266,14 @@ export function MessageBubble({ message, contactName, onRetryMedia }: MessageBub
                                 </div>
                             )
                         ) : previewModal.type.startsWith('video/') ? (
-                            <video 
-                                src={previewModal.url} 
+                            <video
+                                src={previewBlobUrl ?? undefined}
                                 controls
                                 className="max-w-full h-auto mx-auto"
                             />
                         ) : previewModal.type.startsWith('audio/') ? (
-                            <audio 
-                                src={previewModal.url} 
+                            <audio
+                                src={previewBlobUrl ?? undefined}
                                 controls
                                 className="w-full"
                             />

@@ -107,6 +107,7 @@ export interface Message {
     status: MessageStatus;
     readStatus: ReadStatus;
     contactId: string;
+    dbContactId?: number;
     airtableContactId?: string | null;
     phone?: string;
     contactPhone: string;
@@ -199,6 +200,9 @@ export interface EmailMessage {
     receivedDateTime: string;
     hasAttachments?: boolean;
     replies?: EmailMessage[];
+    isThreaded?: boolean;
+    threadMessages?: { isOriginal: boolean; content: string }[] | null;
+    messageCount?: number;
 }
 
 // ─── App-level state ────────────────────────────────────────────────────────

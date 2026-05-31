@@ -5,6 +5,7 @@ import { FILE_UPLOAD } from '../../constants/config';
 import { getMediaType, isImage, isDocument } from '../../types/models';
 import { PYTHON_API } from '../../constants/config';
 import { VoiceNotePlayer } from './VoiceNotePlayer';
+import { useMediaBlobUrl } from '../../utils/useMediaBlobUrl';
 
 interface AttachmentPreviewProps {
     attachment: Attachment;
@@ -17,79 +18,58 @@ export function AttachmentPreview({ attachment, maxWidth = 300, onPreview }: Att
     const [downloading, setDownloading] = useState(false);
     const mediaType = getMediaType(attachment.mimeType);
 
-    // Get the correct URL - backend now returns complete URLs
-    const getCorrectUrl = () => {
-        if (!attachment.url) return '';
-        
-        // If it's already a complete URL, use it directly
-        if (attachment.url.startsWith('http')) {
-            console.log('AttachmentPreview using complete URL directly:', {
-                url: attachment.url,
-                attachmentName: attachment.name
-            });
-            return attachment.url;
-        }
-        
-        // Fallback for relative URLs (shouldn't happen with new backend)
-        const baseUrl = (PYTHON_API as any).BASE_URL || PYTHON_API.BASE_URL;
-        const finalUrl = `${baseUrl}${attachment.url}`;
-        
-        console.log('AttachmentPreview fallback - relative URL found:', {
-            originalUrl: attachment.url,
-            baseUrl,
-            finalUrl,
-            attachmentName: attachment.name
-        });
-        
-        return finalUrl;
-    };
+    // Build resolved URL once (hook must be called unconditionally)
+    const resolvedUrl = attachment.url
+        ? (attachment.url.startsWith('http')
+            ? attachment.url
+            : `${(PYTHON_API as any).BASE_URL || PYTHON_API.BASE_URL}${attachment.url}`)
+        : '';
+
+    const { blobUrl, loading: blobLoading, error: blobError } = useMediaBlobUrl(resolvedUrl);
 
     const handleDownload = async (e: React.MouseEvent) => {
         if (downloading) return;
-        
-        // Prevent event propagation to parent (preview modal)
+
         e.stopPropagation();
         e.preventDefault();
-        
+
         setDownloading(true);
-        
+
         try {
-            const url = getCorrectUrl();
-            console.log('Download starting:', { url, name: attachment.name });
-            
-            // Determine if we need ngrok headers (only for ngrok URLs)
-            const isNgrokUrl = url.includes('ngrok-free.dev');
-            const headers: Record<string, string> = isNgrokUrl ? { 'ngrok-skip-browser-warning': 'true' } : {};
-            
-            const response = await fetch(url, { headers });
+            const isProxy = resolvedUrl.includes('/api/v1/media/');
+            const isNgrok = resolvedUrl.includes('ngrok-free.dev');
+            const headers: Record<string, string> = {
+                ...(isProxy ? { 'X-API-Key': PYTHON_API.API_KEY } : {}),
+                ...(isNgrok ? { 'ngrok-skip-browser-warning': 'true' } : {}),
+            };
+
+            const response = await fetch(resolvedUrl, { headers });
             if (!response.ok) throw new Error('Download failed');
-            
+
             const blob = await response.blob();
             const downloadUrl = window.URL.createObjectURL(blob);
-            
+
             const a = document.createElement('a');
             a.href = downloadUrl;
             a.download = decodeURIComponent(attachment.name);
             document.body.appendChild(a);
             a.click();
-            
+
             window.URL.revokeObjectURL(downloadUrl);
             document.body.removeChild(a);
         } catch (error) {
             console.error('Download failed:', error);
-            // Fallback: open in new tab
-            window.open(getCorrectUrl(), '_blank');
+            window.open(resolvedUrl, '_blank');
         } finally {
             setDownloading(false);
         }
     };
 
     // ─── Image Preview ───────────────────────────────────────
-    if (isImage(attachment.mimeType) && !imageError) {
-        // If no URL available, show image placeholder
+    if (isImage(attachment.mimeType) && !imageError && !blobError) {
         if (!attachment.url) {
             return (
-                <div 
+                <div
                     className="mt-2 rounded-lg overflow-hidden bg-gray-100 cursor-pointer hover:bg-gray-200 transition-colors"
                     onClick={onPreview}
                     style={{ maxWidth: `${maxWidth}px`, height: '150px' }}
@@ -109,15 +89,25 @@ export function AttachmentPreview({ attachment, maxWidth = 300, onPreview }: Att
 
         return (
             <div className="mt-2 rounded-lg overflow-hidden bg-gray-100">
-                <img
-                    src={getCorrectUrl()}
-                    alt={attachment.name}
-                    className="max-w-full h-auto cursor-pointer"
-                    style={{ maxWidth: `${maxWidth}px` }}
-                    onClick={onPreview}
-                    onError={() => setImageError(true)}
-                    loading="lazy"
-                />
+                {blobLoading ? (
+                    <div
+                        className="animate-pulse bg-gray-200 flex items-center justify-center cursor-pointer"
+                        style={{ maxWidth: `${maxWidth}px`, height: '120px' }}
+                        onClick={onPreview}
+                    >
+                        <span className="text-gray-400 text-2xl">🖼️</span>
+                    </div>
+                ) : (
+                    <img
+                        src={blobUrl ?? undefined}
+                        alt={attachment.name}
+                        className="max-w-full h-auto cursor-pointer"
+                        style={{ maxWidth: `${maxWidth}px` }}
+                        onClick={onPreview}
+                        onError={() => setImageError(true)}
+                        loading="lazy"
+                    />
+                )}
                 <div className="px-2 py-1 bg-gray-50 text-xs text-gray-600 flex items-center justify-between">
                     <span>{attachment.name} • {formatFileSize(attachment.size)}</span>
                     <button
@@ -126,7 +116,7 @@ export function AttachmentPreview({ attachment, maxWidth = 300, onPreview }: Att
                         className="text-primary hover:text-primary/80 disabled:opacity-50 text-xs"
                         title="Descargar"
                     >
-                        {downloading ? '⬇' : '⬇'}
+                        ⬇
                     </button>
                 </div>
             </div>
@@ -185,7 +175,7 @@ export function AttachmentPreview({ attachment, maxWidth = 300, onPreview }: Att
     // ─── Audio / Voice Note Preview (inline player) ─────────────
     if (mediaType === 'audio') {
         return (
-            <VoiceNotePlayer url={getCorrectUrl()} isVoice={attachment.isVoice} />
+            <VoiceNotePlayer url={resolvedUrl} isVoice={attachment.isVoice} />
         );
     }
 

@@ -4,7 +4,10 @@
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\CarlosAbreu\\\\OneDrive - MEGAWATTS SAPI DE CV\\\\Documentos\\\\Airtable_Extension\" -Recurse -Directory)",
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(New-Item -ItemType Directory -Force \"C:\\\\Users\\\\CarlosAbreu\\\\OneDrive - MEGAWATTS SAPI DE CV\\\\Documentos\\\\Airtable_Extension\\\\wati_conector\\\\frontend\\\\components\\\\email\")",
-      "Bash(Out-Null)"
+      "Bash(Out-Null)",
+      "Bash(grep -E \"^\\\\s*//|\\\\/\\\\*\")",
+      "Bash(grep -rn \"//.*console\\\\.\" --include=\"*.ts\" --include=\"*.tsx\")",
+      "Bash(dir \"C:\\\\Users\\\\CarlosAbreu\\\\OneDrive - MEGAWATTS SAPI DE CV\\\\Documentos\\\\Airtable_Extension\\\\wati_conector\")"
     ]
   }
 }

@@ -128,6 +128,7 @@ function SalesCRM() {
     const [apiConfigLoaded, setApiConfigLoaded] = useState(false);
     const [conversationWindowActive, setConversationWindowActive] = useState<boolean>(false);
     const [windowStatusLoading, setWindowStatusLoading] = useState<boolean>(true);
+    const [selectedChatMessages, setSelectedChatMessages] = useState<Message[]>([]);
 
     // Ref-based cache of recently-sent messages (survives poll cycles, lost on page reload)
     const sentMessagesRef = useRef<Message[]>([]);
@@ -557,6 +558,44 @@ function SalesCRM() {
         return () => clearInterval(interval);
     }, [apiOnline, selectedPhoneNumber, checkInboxStatus]);
 
+    // Extract DB contact_id from inbox messages (set by adaptMessageWithNumber.dbContactId)
+    const selectedContactDbId = useMemo(() => {
+        if (!selectedContactId) return undefined;
+        const msg = messages.find((m) => m.airtableContactId === selectedContactId && m.dbContactId);
+        return msg?.dbContactId;
+    }, [messages, selectedContactId]);
+
+    // ─── Poll decrypted messages for selected contact via /api/v1/messages ───
+    // The inbox endpoint (/inbox) returns encrypted text_content.
+    // /api/v1/messages?contact_id=X returns the same messages with decrypted text.
+    useEffect(() => {
+        if (!selectedContactId || !selectedContactDbId || !apiOnline) {
+            setSelectedChatMessages([]);
+            return;
+        }
+        let cancelled = false;
+
+        const loadDecrypted = async () => {
+            try {
+                const raw = await getApiMessages(selectedContactDbId);
+                if (!cancelled) {
+                    const adapted = adaptMessages(raw).map((m: Message) => ({
+                        ...m,
+                        contactId: selectedContactId,
+                    }));
+                    setSelectedChatMessages(adapted);
+                    addLog(`Decrypted: ${adapted.length} msgs for ${selectedContactId}`);
+                }
+            } catch (err: any) {
+                if (!cancelled) addLog(`⚠ Decrypted msgs: ${(err as Error).message}`);
+            }
+        };
+
+        loadDecrypted();
+        const interval = setInterval(loadDecrypted, POLLING.INBOX_MESSAGES);
+        return () => { cancelled = true; clearInterval(interval); };
+    }, [selectedContactId, selectedContactDbId, apiOnline, addLog]);
+
     // ─── Reload Meta templates when selected number changes ─────────────────
     useEffect(() => {
         if (!apiOnline || !selectedPhoneNumber) return;
@@ -668,26 +707,18 @@ function SalesCRM() {
     const selectedContact = contacts.find((c) => c.id === selectedContactId) ?? null;
     selectedContactRef.current = selectedContact;
     const contactMessages = messagesWithAirtableIds.filter((m) => m.contactId === selectedContactId);
-    
-    // Extract DB contact_id from messages for API calls
-    const selectedContactDbId = useMemo(() => {
-        if (!selectedContactId) return undefined;
-        
-        // Find a message that has the matching airtable contact ID and extract the DB contact_id
-        const messageWithContactId = messages.find(
-            (m) => m.contact_airtable_id === selectedContactId && m.contact_id
-        );
-        
-        console.log('🔍 DB Contact ID lookup:', {
-            selectedContactId,
-            found: !!messageWithContactId,
-            dbContactId: messageWithContactId?.contact_id,
-            totalMessages: messages.length
-        });
-        
-        return messageWithContactId?.contact_id;
-    }, [messages, selectedContactId]);
 
+    // Prefer decrypted messages from /api/v1/messages; fall back to inbox messages if not yet loaded.
+    // Append any pending optimistic messages (sent but not yet confirmed by server).
+    const chatMessagesToDisplay = useMemo(() => {
+        if (selectedChatMessages.length === 0) return contactMessages;
+        const serverIds = new Set(selectedChatMessages.map((m: Message) => m.id));
+        const pendingOptimistic = contactMessages.filter(
+            (m: Message) => m.isOptimistic && !serverIds.has(m.id)
+        );
+        return [...selectedChatMessages, ...pendingOptimistic];
+    }, [selectedChatMessages, contactMessages]);
+    
     // ─── Mark as read when selecting a conversation ──────────
     const handleSelectContact = useCallback(async (contactId: string | null) => {
         setSelectedContactId(contactId);
@@ -1108,7 +1139,7 @@ function SalesCRM() {
                 chat={
                     <ChatPanel
                         contact={selectedContact}
-                        messages={contactMessages}
+                        messages={chatMessagesToDisplay}
                         templates={templates}
                         onSend={handleSend}
                         onSendMedia={handleSendMedia}
@@ -1130,7 +1161,7 @@ function SalesCRM() {
                         <DetailPanel
                             contact={selectedContact}
                             contacts={contacts}
-                            messages={contactMessages}
+                            messages={chatMessagesToDisplay}
                             onOpenNotes={() => setShowNotesModal(true)}
                             onClose={() => setShowDetail(false)}
                             onSelectContact={(id) => handleSelectContact(id)}
@@ -1153,8 +1184,8 @@ function SalesCRM() {
                 onDismiss={() => setNotification(null)}
             />
 
-            {/* Debug log panel - TEMPORARILY HIDDEN FOR PRESENTATION */}
-            {/* {debugLogs.length > 0 && (
+            {/* Debug log panel */}
+            {debugLogs.length > 0 && (
                 <div className={`fixed bottom-0 left-0 right-0 bg-gray-900/95 z-40 transition-all ${debugMinimized ? '' : 'max-h-28 overflow-y-auto p-2'}`}>
                     <div className={`flex justify-between items-center ${debugMinimized ? 'px-2 py-1' : 'mb-1'}`}>
                         <button onClick={() => setDebugMinimized(!debugMinimized)} className="text-xs text-gray-400 hover:text-white font-mono flex items-center gap-1">
@@ -1169,7 +1200,7 @@ function SalesCRM() {
                         <div key={i} className={`text-xs font-mono ${log.includes('ERROR') ? 'text-red' : 'text-green-light1'}`}>{log}</div>
                     ))}
                 </div>
-            )} */}
+            )}
         </div>
     );
 }

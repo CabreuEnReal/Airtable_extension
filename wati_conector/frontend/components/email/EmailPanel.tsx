@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSession } from '@airtable/blocks/interface/ui';
 import type { EmailMessage, Notification } from '../../types/models';
-import { getMockEmails } from '../../utils/mockEmails';
 import { Avatar } from '../common/Avatar';
 import { EmptyState } from '../common/EmptyState';
 import { Spinner } from '../common/Spinner';
@@ -10,7 +10,12 @@ interface EmailPanelProps {
     contactEmail?: string;
 }
 
-const ME = { name: 'Carlos Abreu', email: 'carlosa@energiareal.mx' };
+const N8N_BASE = 'https://n8n.energiareal.mx';
+const N8N_LOGIN_URL = `${N8N_BASE}/webhook/oauth/login`;
+const N8N_GET_EMAILS_URL = `${N8N_BASE}/webhook/get-emails`;
+const N8N_SEND_EMAIL_URL = `${N8N_BASE}/webhook/send-email`;
+
+// ─── Date helpers ─────────────────────────────────────────────────────────────
 
 function formatEmailDate(dateStr: string): string {
     const date = new Date(dateStr);
@@ -31,15 +36,9 @@ function formatFullDate(dateStr: string): string {
     });
 }
 
-// ─── Email list item ─────────────────────────────────────────────────────────
+// ─── Email list item ──────────────────────────────────────────────────────────
 
-function EmailListItem({
-    email,
-    onClick,
-}: {
-    email: EmailMessage;
-    onClick: () => void;
-}) {
+function EmailListItem({ email, onClick }: { email: EmailMessage; onClick: () => void }) {
     const replyCount = email.replies?.length ?? 0;
 
     return (
@@ -51,11 +50,7 @@ function EmailListItem({
                 <Avatar name={email.from.name} size="sm" />
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-0.5">
-                        <span
-                            className={`text-[11px] truncate ${
-                                email.isRead ? 'text-gray-600' : 'text-gray-900 font-semibold'
-                            }`}
-                        >
+                        <span className={`text-[11px] truncate ${email.isRead ? 'text-gray-600' : 'text-gray-900 font-semibold'}`}>
                             {email.from.name}
                         </span>
                         <div className="flex items-center gap-1.5 shrink-0">
@@ -69,11 +64,7 @@ function EmailListItem({
                             </span>
                         </div>
                     </div>
-                    <div
-                        className={`text-[11px] truncate mb-0.5 ${
-                            email.isRead ? 'text-gray-500' : 'text-gray-800 font-medium'
-                        }`}
-                    >
+                    <div className={`text-[11px] truncate mb-0.5 ${email.isRead ? 'text-gray-500' : 'text-gray-800 font-medium'}`}>
                         {email.subject}
                     </div>
                     <div className="text-[10px] text-gray-400 truncate">{email.bodyPreview}</div>
@@ -86,15 +77,9 @@ function EmailListItem({
     );
 }
 
-// ─── Thread message bubble ───────────────────────────────────────────────────
+// ─── Thread message bubble ────────────────────────────────────────────────────
 
-function ThreadBubble({
-    message,
-    isFromContact,
-}: {
-    message: EmailMessage;
-    isFromContact: boolean;
-}) {
+function ThreadBubble({ message, isFromContact }: { message: EmailMessage; isFromContact: boolean }) {
     return (
         <div className={`flex flex-col gap-1 ${isFromContact ? 'items-start' : 'items-end'}`}>
             <div className="flex items-center gap-1.5 px-1">
@@ -110,13 +95,36 @@ function ThreadBubble({
                         : 'bg-primary text-white rounded-tr-sm'
                 }`}
             >
-                <p className="text-xs leading-relaxed whitespace-pre-wrap">{message.body}</p>
+                {message.isThreaded && message.threadMessages && message.threadMessages.length > 0 ? (
+                    <div className="flex flex-col gap-2 w-full">
+                        <div className="text-[10px] text-gray-500 font-semibold mb-1 opacity-80">
+                            Hilo de conversación ({message.messageCount} mensajes)
+                        </div>
+                        {message.threadMessages.map((msg, idx) => (
+                            <div
+                                key={idx}
+                                className={`p-2 rounded border-l-2 ${
+                                    msg.isOriginal
+                                        ? 'border-blue-500 bg-blue-50/50 text-blue-900'
+                                        : 'border-gray-300 bg-gray-50/50 text-gray-800'
+                                }`}
+                            >
+                                <div className="text-[10px] opacity-70 mb-1 font-semibold">
+                                    Mensaje {idx + 1} {msg.isOriginal ? '(Original)' : '(Respuesta)'}
+                                </div>
+                                <p className="text-xs leading-relaxed whitespace-pre-wrap">
+                                    {msg.content}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <p className="text-xs leading-relaxed whitespace-pre-wrap">
+                        {message.body || message.bodyPreview || 'Sin contenido'}
+                    </p>
+                )}
                 {message.hasAttachments && (
-                    <div
-                        className={`mt-2 text-[10px] flex items-center gap-1 ${
-                            isFromContact ? 'text-gray-400' : 'text-green-100'
-                        }`}
-                    >
+                    <div className={`mt-2 text-[10px] flex items-center gap-1 ${isFromContact ? 'text-gray-400' : 'text-green-100'}`}>
                         📎 Tiene adjuntos
                     </div>
                 )}
@@ -125,48 +133,35 @@ function ThreadBubble({
     );
 }
 
-// ─── Thread view ─────────────────────────────────────────────────────────────
+// ─── Thread view ──────────────────────────────────────────────────────────────
 
 function ThreadView({
     email,
     contactEmail,
     onBack,
-    onAddReply,
+    onSendReply,
 }: {
     email: EmailMessage;
     contactEmail: string;
     onBack: () => void;
-    onAddReply: (reply: EmailMessage) => void;
+    onSendReply: (replyText: string) => Promise<void>;
 }) {
     const [replyText, setReplyText] = useState('');
     const [isSending, setIsSending] = useState(false);
 
     const allMessages = [email, ...(email.replies ?? [])].sort(
-        (a, b) =>
-            new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime()
+        (a, b) => new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime()
     );
 
     async function handleSend() {
         if (!replyText.trim() || isSending) return;
-
         setIsSending(true);
-
-        const newReply: EmailMessage = {
-            id: `reply-${Date.now()}`,
-            subject: `RE: ${email.subject}`,
-            bodyPreview: replyText.slice(0, 100),
-            body: replyText,
-            from: ME,
-            isRead: true,
-            receivedDateTime: new Date().toISOString(),
-            hasAttachments: false,
-        };
-
-        await new Promise<void>(res => setTimeout(res, 1000));
-
-        onAddReply(newReply);
-        setReplyText('');
-        setIsSending(false);
+        try {
+            await onSendReply(replyText);
+            setReplyText('');
+        } finally {
+            setIsSending(false);
+        }
     }
 
     function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -178,7 +173,6 @@ function ThreadView({
 
     return (
         <div className="flex flex-col h-full overflow-hidden">
-            {/* Back button */}
             <div className="px-3 py-2.5 border-b border-gray-100 shrink-0">
                 <button
                     onClick={onBack}
@@ -188,7 +182,6 @@ function ThreadView({
                 </button>
             </div>
 
-            {/* Thread subject header */}
             <div className="px-4 py-2.5 border-b border-gray-100 shrink-0 bg-gray-50">
                 <h3 className="text-xs font-semibold text-gray-800 leading-snug truncate">
                     {email.subject}
@@ -198,7 +191,6 @@ function ThreadView({
                 </span>
             </div>
 
-            {/* Messages — independent scroll */}
             <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
                 {allMessages.map(msg => (
                     <ThreadBubble
@@ -209,7 +201,6 @@ function ThreadView({
                 ))}
             </div>
 
-            {/* Reply input — docked at bottom */}
             <div className="px-3 py-2.5 border-t border-gray-100 shrink-0 bg-white">
                 <div className="flex items-end gap-2 border border-gray-200 rounded-xl px-3 py-2 focus-within:border-primary transition-colors">
                     <textarea
@@ -226,11 +217,7 @@ function ThreadView({
                         disabled={isSending || !replyText.trim()}
                         className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
-                        {isSending ? (
-                            <Spinner size="sm" />
-                        ) : (
-                            <span className="text-white text-base leading-none">↑</span>
-                        )}
+                        {isSending ? <Spinner size="sm" /> : <span className="text-white text-base leading-none">↑</span>}
                     </button>
                 </div>
                 <p className="text-[10px] text-gray-400 mt-1 px-1">
@@ -241,32 +228,162 @@ function ThreadView({
     );
 }
 
-// ─── Main EmailPanel ─────────────────────────────────────────────────────────
+// ─── Main EmailPanel ──────────────────────────────────────────────────────────
 
 export function EmailPanel({ contactEmail }: EmailPanelProps) {
-    const [isMsConnected, setIsMsConnected] = useState(false);
+    const session = useSession();
+    const airtableUserId = (session as any)?.currentUser?.id;
+    const popupRef = useRef<Window | null>(null);
+
+    // null = checking auth, false = disconnected, true = connected
+    const [isMsConnected, setIsMsConnected] = useState<boolean | null>(null);
     const [isConnecting, setIsConnecting] = useState(false);
+    const [isLoadingEmails, setIsLoadingEmails] = useState(false);
     const [emails, setEmails] = useState<EmailMessage[]>([]);
     const [selectedEmail, setSelectedEmail] = useState<EmailMessage | null>(null);
     const [notification, setNotification] = useState<Notification | null>(null);
 
     // Reset when contact changes
     useEffect(() => {
-        setEmails(contactEmail ? getMockEmails(contactEmail) : []);
+        setEmails([]);
         setSelectedEmail(null);
+        setIsMsConnected(null);
     }, [contactEmail]);
 
-    async function handleConnectAccount() {
+    // ─── Phase 2: load emails ─────────────────────────────────────────────────
+
+    const loadEmails = useCallback(async () => {
+        if (!contactEmail || !airtableUserId) return;
+        setIsLoadingEmails(true);
+        try {
+            const res = await fetch(
+                `${N8N_GET_EMAILS_URL}?contactEmail=${encodeURIComponent(contactEmail)}&airtableUserId=${encodeURIComponent(airtableUserId)}`,
+                { headers: { 'Content-Type': 'application/json' } }
+            );
+            if (res.status === 401) {
+                setIsMsConnected(false);
+                return;
+            }
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            setEmails(Array.isArray(data) ? data : (data.emails ?? []));
+            setIsMsConnected(true);
+        } catch (err: any) {
+            setIsMsConnected(prev => prev ?? false);
+            setNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                text: `Error al cargar correos: ${err.message}`,
+            });
+        } finally {
+            setIsLoadingEmails(false);
+        }
+    }, [contactEmail, airtableUserId]);
+
+    // Auto-check auth on mount / when contact or userId changes
+    useEffect(() => {
+        if (contactEmail && airtableUserId) loadEmails();
+    }, [loadEmails]);
+
+    // ─── Phase 1: OAuth popup + postMessage listener ──────────────────────────
+
+    useEffect(() => {
+        function handleMessage(event: MessageEvent) {
+            const type = event.data?.type;
+            if (type === 'OAUTH_SUCCESS') {
+                popupRef.current?.close();
+                setIsConnecting(false);
+                loadEmails();
+            } else if (type === 'OAUTH_ERROR') {
+                popupRef.current?.close();
+                setIsConnecting(false);
+                setNotification({ id: Date.now().toString(), type: 'error', text: 'Error al conectar con Microsoft' });
+            } else if (type === 'OAUTH_DENIED') {
+                popupRef.current?.close();
+                setIsConnecting(false);
+                setNotification({ id: Date.now().toString(), type: 'info', text: 'Autorización cancelada' });
+            }
+        }
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, [loadEmails]);
+
+    function handleConnectAccount() {
+        if (!airtableUserId) {
+            setNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                text: 'No se pudo obtener el ID de usuario. Recarga la extensión.',
+            });
+            return;
+        }
         setIsConnecting(true);
-        await new Promise<void>(res => setTimeout(res, 2000));
-        setIsConnecting(false);
-        setIsMsConnected(true);
-        setNotification({
-            id: Date.now().toString(),
-            type: 'success',
-            text: 'Cuenta de Microsoft vinculada exitosamente',
-        });
+        const popup = window.open(
+            `${N8N_LOGIN_URL}?airtableUserId=${encodeURIComponent(airtableUserId)}`,
+            'microsoft-oauth',
+            'popup=yes,width=600,height=700,left=100,top=100'
+        );
+        popupRef.current = popup;
+        if (!popup || popup.closed) {
+            setIsConnecting(false);
+            setNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                text: 'Popup bloqueado. Permite ventanas emergentes para este sitio.',
+            });
+        }
     }
+
+    // ─── Phase 3: send reply with optimistic update ───────────────────────────
+
+    async function handleSendReply(replyText: string) {
+        if (!selectedEmail || !contactEmail || !airtableUserId) return;
+
+        const myEmail = (session as any)?.currentUser?.email ?? '';
+        const myName = (session as any)?.currentUser?.name ?? 'Yo';
+
+        const tempReply: EmailMessage = {
+            id: `temp-${Date.now()}`,
+            subject: `RE: ${selectedEmail.subject}`,
+            bodyPreview: replyText.slice(0, 100),
+            body: replyText,
+            from: { name: myName, email: myEmail },
+            isRead: true,
+            receivedDateTime: new Date().toISOString(),
+            hasAttachments: false,
+        };
+
+        const updatedEmail: EmailMessage = {
+            ...selectedEmail,
+            replies: [...(selectedEmail.replies ?? []), tempReply],
+        };
+        setEmails(prev => prev.map(e => e.id === selectedEmail.id ? updatedEmail : e));
+        setSelectedEmail(updatedEmail);
+
+        try {
+            const res = await fetch(N8N_SEND_EMAIL_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    airtableUserId,
+                    toEmail: contactEmail,
+                    subject: `RE: ${selectedEmail.subject}`,
+                    bodyText: replyText,
+                }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            setNotification({ id: Date.now().toString(), type: 'success', text: 'Correo enviado exitosamente' });
+            setTimeout(() => { loadEmails(); }, 3000);
+        } catch (err: any) {
+            // Rollback optimistic update
+            setEmails(prev => prev.map(e => e.id === selectedEmail.id ? selectedEmail : e));
+            setSelectedEmail(selectedEmail);
+            setNotification({ id: Date.now().toString(), type: 'error', text: `Error al enviar: ${err.message}` });
+            throw err;
+        }
+    }
+
+    // ─── Guards ───────────────────────────────────────────────────────────────
 
     if (!contactEmail) {
         return (
@@ -275,6 +392,14 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
                 title="Sin correo vinculado"
                 description="Este contacto no tiene dirección de correo. Actualiza el registro en Airtable para habilitar esta función."
             />
+        );
+    }
+
+    if (isMsConnected === null || (isLoadingEmails && emails.length === 0)) {
+        return (
+            <div className="flex items-center justify-center h-full">
+                <Spinner size="md" label={isMsConnected === null ? 'Verificando conexión...' : 'Cargando correos...'} />
+            </div>
         );
     }
 
@@ -315,11 +440,7 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
                         Solo lectura · No se enviarán correos sin tu confirmación
                     </p>
                 </div>
-                <Toast
-                    notification={notification}
-                    onDismiss={() => setNotification(null)}
-                    duration={3000}
-                />
+                <Toast notification={notification} onDismiss={() => setNotification(null)} duration={3000} />
             </>
         );
     }
@@ -334,28 +455,6 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
         );
     }
 
-    function handleAddReply(newReply: EmailMessage) {
-        if (!selectedEmail) return;
-
-        const targetId = selectedEmail.id;
-
-        const updatedEmail: EmailMessage = {
-            ...selectedEmail,
-            replies: [...(selectedEmail.replies ?? []), newReply],
-        };
-
-        setEmails(prev =>
-            prev.map(e => (e.id === targetId ? updatedEmail : e))
-        );
-        setSelectedEmail(updatedEmail);
-        setNotification({
-            id: Date.now().toString(),
-            type: 'success',
-            text: 'Correo enviado exitosamente',
-        });
-    }
-
-    // Thread view
     if (selectedEmail !== null) {
         return (
             <>
@@ -363,18 +462,13 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
                     email={selectedEmail}
                     contactEmail={contactEmail}
                     onBack={() => setSelectedEmail(null)}
-                    onAddReply={handleAddReply}
+                    onSendReply={handleSendReply}
                 />
-                <Toast
-                    notification={notification}
-                    onDismiss={() => setNotification(null)}
-                    duration={3000}
-                />
+                <Toast notification={notification} onDismiss={() => setNotification(null)} duration={3000} />
             </>
         );
     }
 
-    // List view
     return (
         <div className="flex flex-col h-full overflow-hidden">
             <div className="px-4 py-2 border-b border-gray-100 shrink-0 bg-gray-50">
@@ -391,6 +485,7 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
                     />
                 ))}
             </div>
+            <Toast notification={notification} onDismiss={() => setNotification(null)} duration={3000} />
         </div>
     );
 }
