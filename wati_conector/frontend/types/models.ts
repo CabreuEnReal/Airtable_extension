@@ -187,6 +187,16 @@ export interface Template {
 
 // ─── Email (Microsoft Graph API shape) ─────────────────────────────────────
 
+export interface ParsedMessage {
+    id: string;
+    content: string;
+    from: { name: string; email: string };
+    date: string;
+    isOriginal: boolean;
+    status?: 'sending' | 'sent' | 'failed';
+    direction?: 'sent' | 'received';
+}
+
 export interface EmailMessage {
     id: string;
     subject: string;
@@ -203,6 +213,7 @@ export interface EmailMessage {
     isThreaded?: boolean;
     threadMessages?: { isOriginal: boolean; content: string }[] | null;
     messageCount?: number;
+    parsedThread?: ParsedMessage[];
 }
 
 // ─── App-level state ────────────────────────────────────────────────────────

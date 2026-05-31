@@ -7,7 +7,8 @@
       "Bash(Out-Null)",
       "Bash(grep -E \"^\\\\s*//|\\\\/\\\\*\")",
       "Bash(grep -rn \"//.*console\\\\.\" --include=\"*.ts\" --include=\"*.tsx\")",
-      "Bash(dir \"C:\\\\Users\\\\CarlosAbreu\\\\OneDrive - MEGAWATTS SAPI DE CV\\\\Documentos\\\\Airtable_Extension\\\\wati_conector\")"
+      "Bash(dir \"C:\\\\Users\\\\CarlosAbreu\\\\OneDrive - MEGAWATTS SAPI DE CV\\\\Documentos\\\\Airtable_Extension\\\\wati_conector\")",
+      "Bash(Get-ChildItem *)"
     ]
   }
 }

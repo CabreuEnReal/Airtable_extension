@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from '@airtable/blocks/interface/ui';
-import type { EmailMessage, Notification } from '../../types/models';
+import type { EmailMessage, ParsedMessage, Notification } from '../../types/models';
+import { parseEmailThread } from '../../utils/emailParser';
 import { Avatar } from '../common/Avatar';
 import { EmptyState } from '../common/EmptyState';
 import { Spinner } from '../common/Spinner';
@@ -79,54 +80,38 @@ function EmailListItem({ email, onClick }: { email: EmailMessage; onClick: () =>
 
 // ─── Thread message bubble ────────────────────────────────────────────────────
 
-function ThreadBubble({ message, isFromContact }: { message: EmailMessage; isFromContact: boolean }) {
+function ThreadBubble({ message, contactEmail }: { message: ParsedMessage; contactEmail: string }) {
+    // direction takes precedence; fall back to email comparison
+    const isSent = message.direction
+        ? message.direction === 'sent'
+        : message.from.email !== contactEmail;
+
     return (
-        <div className={`flex flex-col gap-1 ${isFromContact ? 'items-start' : 'items-end'}`}>
+        <div className={`flex flex-col gap-1 ${isSent ? 'items-end' : 'items-start'}`}>
             <div className="flex items-center gap-1.5 px-1">
-                {isFromContact && <Avatar name={message.from.name} size="sm" />}
+                {!isSent && <Avatar name={message.from.name} size="sm" />}
                 <span className="text-[10px] text-gray-400">
-                    {message.from.name} · {formatFullDate(message.receivedDateTime)}
+                    {message.from.name} · {formatFullDate(message.date)}
                 </span>
             </div>
             <div
                 className={`max-w-[88%] rounded-xl px-3 py-2.5 ${
-                    isFromContact
-                        ? 'bg-gray-100 text-gray-700 rounded-tl-sm'
-                        : 'bg-primary text-white rounded-tr-sm'
-                }`}
+                    isSent
+                        ? 'bg-primary text-white rounded-tr-sm'
+                        : 'bg-gray-100 text-gray-700 rounded-tl-sm'
+                } ${message.status === 'sending' ? 'opacity-70' : ''}`}
             >
-                {message.isThreaded && message.threadMessages && message.threadMessages.length > 0 ? (
-                    <div className="flex flex-col gap-2 w-full">
-                        <div className="text-[10px] text-gray-500 font-semibold mb-1 opacity-80">
-                            Hilo de conversación ({message.messageCount} mensajes)
-                        </div>
-                        {message.threadMessages.map((msg, idx) => (
-                            <div
-                                key={idx}
-                                className={`p-2 rounded border-l-2 ${
-                                    msg.isOriginal
-                                        ? 'border-blue-500 bg-blue-50/50 text-blue-900'
-                                        : 'border-gray-300 bg-gray-50/50 text-gray-800'
-                                }`}
-                            >
-                                <div className="text-[10px] opacity-70 mb-1 font-semibold">
-                                    Mensaje {idx + 1} {msg.isOriginal ? '(Original)' : '(Respuesta)'}
-                                </div>
-                                <p className="text-xs leading-relaxed whitespace-pre-wrap">
-                                    {msg.content}
-                                </p>
-                            </div>
-                        ))}
+                <p className="text-xs leading-relaxed whitespace-pre-wrap">
+                    {message.content || 'Sin contenido'}
+                </p>
+                {message.status === 'sending' && (
+                    <div className="flex items-center gap-1 mt-1.5">
+                        <Spinner size="sm" />
+                        <span className="text-[10px] opacity-70">Enviando...</span>
                     </div>
-                ) : (
-                    <p className="text-xs leading-relaxed whitespace-pre-wrap">
-                        {message.body || message.bodyPreview || 'Sin contenido'}
-                    </p>
                 )}
-                {message.hasAttachments && (
-                    <div className={`mt-2 text-[10px] flex items-center gap-1 ${isFromContact ? 'text-gray-400' : 'text-green-100'}`}>
-                        📎 Tiene adjuntos
-                    </div>
+                {message.status === 'failed' && (
+                    <span className="text-[10px] text-red-300 mt-1 block">⚠ Error al enviar</span>
                 )}
             </div>
         </div>
@@ -140,25 +125,28 @@ function ThreadView({
     contactEmail,
     onBack,
     onSendReply,
+    replyText,
+    setReplyText,
 }: {
     email: EmailMessage;
     contactEmail: string;
     onBack: () => void;
     onSendReply: (replyText: string) => Promise<void>;
+    replyText: string;
+    setReplyText: (v: string) => void;
 }) {
-    const [replyText, setReplyText] = useState('');
     const [isSending, setIsSending] = useState(false);
 
-    const allMessages = [email, ...(email.replies ?? [])].sort(
-        (a, b) => new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime()
-    );
+    // parsedThread already includes optimistic messages injected by handleSendReply
+    const allMessages: ParsedMessage[] = email.parsedThread && email.parsedThread.length > 0
+        ? email.parsedThread
+        : [{ id: email.id, content: email.body || email.bodyPreview || '', from: email.from, date: email.receivedDateTime, isOriginal: true }];
 
     async function handleSend() {
         if (!replyText.trim() || isSending) return;
         setIsSending(true);
         try {
             await onSendReply(replyText);
-            setReplyText('');
         } finally {
             setIsSending(false);
         }
@@ -187,7 +175,7 @@ function ThreadView({
                     {email.subject}
                 </h3>
                 <span className="text-[10px] text-gray-400">
-                    {allMessages.length} mensaje{allMessages.length !== 1 ? 's' : ''}
+                    {allMessages.length} mensaje{allMessages.length !== 1 ? 's' : ''} en el hilo
                 </span>
             </div>
 
@@ -196,7 +184,7 @@ function ThreadView({
                     <ThreadBubble
                         key={msg.id}
                         message={msg}
-                        isFromContact={msg.from.email === contactEmail}
+                        contactEmail={contactEmail}
                     />
                 ))}
             </div>
@@ -242,12 +230,14 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
     const [emails, setEmails] = useState<EmailMessage[]>([]);
     const [selectedEmail, setSelectedEmail] = useState<EmailMessage | null>(null);
     const [notification, setNotification] = useState<Notification | null>(null);
+    const [replyText, setReplyText] = useState('');
 
     // Reset when contact changes
     useEffect(() => {
         setEmails([]);
         setSelectedEmail(null);
         setIsMsConnected(null);
+        setReplyText('');
     }, [contactEmail]);
 
     // ─── Phase 2: load emails ─────────────────────────────────────────────────
@@ -266,7 +256,16 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
             }
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            setEmails(Array.isArray(data) ? data : (data.emails ?? []));
+            const rawEmails: EmailMessage[] = Array.isArray(data) ? data : (data.emails ?? []);
+            const withThreads = rawEmails.map(email => ({
+                ...email,
+                parsedThread: parseEmailThread(
+                    email.body || email.bodyPreview || '',
+                    email.from,
+                    email.receivedDateTime
+                ),
+            }));
+            setEmails(withThreads);
             setIsMsConnected(true);
         } catch (err: any) {
             setIsMsConnected(prev => prev ?? false);
@@ -336,52 +335,120 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
 
     // ─── Phase 3: send reply with optimistic update ───────────────────────────
 
-    async function handleSendReply(replyText: string) {
-        if (!selectedEmail || !contactEmail || !airtableUserId) return;
+    const handleSendReply = async (replyTextParam: string) => {
+        if (!replyTextParam || replyTextParam.trim().length === 0) {
+            setNotification({ id: Date.now().toString(), type: 'error', text: 'El mensaje no puede estar vacío' });
+            return;
+        }
+        if (!selectedEmail) {
+            setNotification({ id: Date.now().toString(), type: 'error', text: 'No hay email seleccionado' });
+            return;
+        }
+        if (!contactEmail) {
+            setNotification({ id: Date.now().toString(), type: 'error', text: 'Email del contacto no disponible' });
+            return;
+        }
+        if (!airtableUserId) {
+            setNotification({ id: Date.now().toString(), type: 'error', text: 'Usuario de Airtable no identificado' });
+            return;
+        }
 
-        const myEmail = (session as any)?.currentUser?.email ?? '';
+        const formattedBodyText = replyTextParam.replace(/\n/g, '<br/>');
+        const myEmail = (session as any)?.currentUser?.email ?? 'unknown@example.com';
         const myName = (session as any)?.currentUser?.name ?? 'Yo';
 
-        const tempReply: EmailMessage = {
+        const tempParsedMessage: ParsedMessage = {
             id: `temp-${Date.now()}`,
-            subject: `RE: ${selectedEmail.subject}`,
-            bodyPreview: replyText.slice(0, 100),
-            body: replyText,
+            content: replyTextParam,
             from: { name: myName, email: myEmail },
-            isRead: true,
-            receivedDateTime: new Date().toISOString(),
-            hasAttachments: false,
+            date: new Date().toISOString(),
+            isOriginal: false,
+            status: 'sending',
+            direction: 'sent',
         };
+
+        const previousEmailState: EmailMessage = JSON.parse(JSON.stringify(selectedEmail));
+        const previousReplyText = replyTextParam;
 
         const updatedEmail: EmailMessage = {
             ...selectedEmail,
-            replies: [...(selectedEmail.replies ?? []), tempReply],
+            parsedThread: [...(selectedEmail.parsedThread ?? []), tempParsedMessage],
         };
-        setEmails(prev => prev.map(e => e.id === selectedEmail.id ? updatedEmail : e));
+
         setSelectedEmail(updatedEmail);
+        setEmails(prevEmails => prevEmails.map(email => email.id === selectedEmail.id ? updatedEmail : email));
+        setReplyText('');
+        setNotification({ id: Date.now().toString(), type: 'info', text: 'Enviando mensaje...' });
 
         try {
-            const res = await fetch(N8N_SEND_EMAIL_URL, {
+            console.log('====================================');
+            console.log('📤 Enviando a webhook:', N8N_SEND_EMAIL_URL);
+            console.log('📦 Body a enviar:', {
+                airtableUserId,
+                toEmail: contactEmail,
+                subject: `RE: ${selectedEmail.subject}`,
+                bodyText: formattedBodyText,
+                messageId: selectedEmail.id,
+            });
+
+            const response = await fetch(N8N_SEND_EMAIL_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
                 body: JSON.stringify({
-                    airtableUserId,
+                    airtableUserId: airtableUserId,
                     toEmail: contactEmail,
                     subject: `RE: ${selectedEmail.subject}`,
-                    bodyText: replyText,
+                    bodyText: formattedBodyText,
+                    messageId: selectedEmail.id,
                 }),
             });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            setNotification({ id: Date.now().toString(), type: 'success', text: 'Correo enviado exitosamente' });
-            setTimeout(() => { loadEmails(); }, 3000);
-        } catch (err: any) {
-            // Rollback optimistic update
-            setEmails(prev => prev.map(e => e.id === selectedEmail.id ? selectedEmail : e));
-            setSelectedEmail(selectedEmail);
-            setNotification({ id: Date.now().toString(), type: 'error', text: `Error al enviar: ${err.message}` });
-            throw err;
+
+            console.log('✓ Respuesta HTTP:', response.status, response.statusText);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            console.log('✓ Respuesta JSON de n8n:', data);
+            console.log('====================================');
+
+            if (data.success === false) {
+                throw new Error(data.error || data.errorMessage || 'Error desconocido del servidor');
+            }
+
+            const updatedEmailAfterSuccess: EmailMessage = {
+                ...updatedEmail,
+                parsedThread: (updatedEmail.parsedThread ?? []).map(msg =>
+                    msg.id === tempParsedMessage.id ? { ...msg, status: 'sent' as const } : msg
+                ),
+            };
+            setSelectedEmail(updatedEmailAfterSuccess);
+            setEmails(prevEmails => prevEmails.map(email => email.id === selectedEmail.id ? updatedEmailAfterSuccess : email));
+
+            setNotification({ id: Date.now().toString(), type: 'success', text: 'Mensaje enviado correctamente' });
+            setTimeout(() => { loadEmails(); }, 1500);
+
+        } catch (error) {
+            console.error('❌ Error en el envío:', error);
+
+            const rollbackEmail: EmailMessage = {
+                ...previousEmailState,
+                parsedThread: (previousEmailState.parsedThread ?? []).filter(
+                    (msg: ParsedMessage) => !msg.id.startsWith('temp-')
+                ),
+            };
+            setSelectedEmail(rollbackEmail);
+            setEmails(prevEmails => prevEmails.map(email => email.id === selectedEmail.id ? rollbackEmail : email));
+            setReplyText(previousReplyText);
+
+            const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+            setNotification({ id: Date.now().toString(), type: 'error', text: `Error al enviar: ${errorMsg}` });
         }
-    }
+    };
 
     // ─── Guards ───────────────────────────────────────────────────────────────
 
@@ -463,6 +530,8 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
                     contactEmail={contactEmail}
                     onBack={() => setSelectedEmail(null)}
                     onSendReply={handleSendReply}
+                    replyText={replyText}
+                    setReplyText={setReplyText}
                 />
                 <Toast notification={notification} onDismiss={() => setNotification(null)} duration={3000} />
             </>
