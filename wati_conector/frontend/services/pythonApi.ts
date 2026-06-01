@@ -628,3 +628,22 @@ export async function getNumberTemplates(
         `/api/v1/whatsapp/numbers/${numberId}/templates?status_filter=${statusFilter}`
     );
 }
+
+// ─── Conversation Window + AI Summary ──────────────────────────────────────
+
+export async function notifyWindowExpired(whatsappNumberId: number, contactId: number): Promise<void> {
+    await apiFetch<unknown>('/api/conversations/webhooks/window-expired', {
+        method: 'POST',
+        body: JSON.stringify({
+            whatsapp_number_id: whatsappNumberId,
+            contact_id: contactId,
+            conversation_id: `${whatsappNumberId}_${contactId}`,
+        }),
+    });
+}
+
+export async function getConversationMessages(conversationId: string): Promise<import('../types/api').ApiConversationResponse> {
+    return apiFetch<import('../types/api').ApiConversationResponse>(
+        `/api/conversations/${encodeURIComponent(conversationId)}/messages`
+    );
+}

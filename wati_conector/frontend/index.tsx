@@ -5,6 +5,7 @@ import './style.css';
 // ─── Services & types ───────────────────────────────────────
 import type { Contact, Message, Template, Notification as AppNotification } from './types/models';
 import type { WhatsAppNumber, NumberStats, InboxStatus, MessageWithNumber } from './types/whatsapp';
+import type { ApiConversationResponse } from './types/api';
 import { POLLING } from './constants/config';
 import { detectBaseId, getAllContacts } from './services/airtable';
 // contactAdapter imports removed — contacts loaded from Airtable via getAllContacts
@@ -32,7 +33,9 @@ import {
     bulkMarkInboxAsRead,
     sendApiMessageFromNumber,
     getDefaultTemplate,
-    getNumberTemplates
+    getNumberTemplates,
+    notifyWindowExpired,
+    getConversationMessages,
 } from './services/pythonApi';
 import { adaptMessages, adaptMessagesWithNumber } from './adapters/messageAdapter';
 import { adaptMetaTemplates, adaptAirtableTemplates } from './adapters/templateAdapter';
@@ -129,12 +132,14 @@ function SalesCRM() {
     const [conversationWindowActive, setConversationWindowActive] = useState<boolean>(false);
     const [windowStatusLoading, setWindowStatusLoading] = useState<boolean>(true);
     const [selectedChatMessages, setSelectedChatMessages] = useState<Message[]>([]);
+    const [conversationResponse, setConversationResponse] = useState<ApiConversationResponse | null>(null);
+    const [summaryLoading, setSummaryLoading] = useState(false);
+    const [summaryError, setSummaryError] = useState<string | null>(null);
 
-    // Ref-based cache of recently-sent messages (survives poll cycles, lost on page reload)
     const sentMessagesRef = useRef<Message[]>([]);
-
-    // Ref to track selectedContact without adding it to polling deps
     const selectedContactRef = useRef<Contact | null>(null);
+    const webhookFiredRef = useRef(new Set<string>());
+    const summaryAbortRef = useRef<AbortController | null>(null);
 
     /** Merge server messages with locally-cached sent messages.
      *  - Preserves Airtable contactIds from previous state
@@ -182,6 +187,57 @@ function SalesCRM() {
     const addLog = useCallback((msg: string) => {
         setDebugLogs((prev) => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: ${msg}`]);
     }, []);
+
+    // ─── Fire window-expired webhook + poll smart endpoint ────────────────────
+    const fireWindowExpiredAndFetch = useCallback(async (conversationId: string) => {
+        summaryAbortRef.current?.abort();
+        const abort = new AbortController();
+        summaryAbortRef.current = abort;
+
+        setSummaryLoading(true);
+        setSummaryError(null);
+
+        const sleep = (ms: number) =>
+            new Promise<void>((resolve, reject) => {
+                const id = setTimeout(resolve, ms);
+                abort.signal.addEventListener('abort', () => {
+                    clearTimeout(id);
+                    reject(new DOMException('aborted', 'AbortError'));
+                });
+            });
+
+        try {
+            const [whatsappNumStr, contactIdStr] = conversationId.split('_');
+            await notifyWindowExpired(Number(whatsappNumStr), Number(contactIdStr));
+            addLog(`Window-expired webhook fired for ${conversationId}`);
+
+            let attempts = 0;
+            while (attempts < 15) {
+                if (abort.signal.aborted) return;
+
+                const response = await getConversationMessages(conversationId);
+                // Always update UI (Caso C shows "Generando..." immediately)
+                setConversationResponse(response);
+
+                if (response.status === 'closed' && !Array.isArray(response.data)) {
+                    addLog(`AI summary ready for ${conversationId}`);
+                    return;
+                }
+
+                attempts++;
+                if (attempts < 15) await sleep(2000);
+            }
+
+            throw new Error('El resumen tardó demasiado. Intenta nuevamente.');
+        } catch (err: any) {
+            if (err.name === 'AbortError') return;
+            addLog(`⚠ Summary error for ${conversationId}: ${err.message}`);
+            setSummaryError(err.message ?? 'Error desconocido');
+            setConversationResponse(null);
+        } finally {
+            if (!abort.signal.aborted) setSummaryLoading(false);
+        }
+    }, [addLog]);
 
     // ─── Extract conversationActive from adapted inbox messages by phone ──────
     const updateConversationActive = useCallback((adapted: Message[]) => {
@@ -565,6 +621,26 @@ function SalesCRM() {
         return msg?.dbContactId;
     }, [messages, selectedContactId]);
 
+    // ─── Trigger window-expired webhook when 24h window closes ──────────────
+    useEffect(() => {
+        // Guard: only fire when window is confirmed expired, IDs available, not loading
+        if (conversationWindowActive || !selectedContactDbId || !selectedPhoneNumber || windowStatusLoading) return;
+
+        // Precision #1: build conversationId inside the effect scope
+        const conversationId = `${selectedPhoneNumber}_${selectedContactDbId}`;
+
+        // Fire only once per conversation — prevent duplicate POSTs across poll cycles
+        if (webhookFiredRef.current.has(conversationId)) return;
+        webhookFiredRef.current.add(conversationId);
+
+        fireWindowExpiredAndFetch(conversationId);
+
+        // Precision #4: cleanup cancels only the async request, no setState
+        return () => {
+            summaryAbortRef.current?.abort();
+        };
+    }, [conversationWindowActive, selectedContactDbId, selectedPhoneNumber, windowStatusLoading, fireWindowExpiredAndFetch]);
+
     // ─── Poll decrypted messages for selected contact via /api/v1/messages ───
     // The inbox endpoint (/inbox) returns encrypted text_content.
     // /api/v1/messages?contact_id=X returns the same messages with decrypted text.
@@ -721,9 +797,14 @@ function SalesCRM() {
     
     // ─── Mark as read when selecting a conversation ──────────
     const handleSelectContact = useCallback(async (contactId: string | null) => {
+        // Precision #2: cleanup BEFORE changing contact — synchronous, no timing issues
+        summaryAbortRef.current?.abort();
+        webhookFiredRef.current.clear();
+        setConversationResponse(null);
+        setSummaryError(null);
         setSelectedContactId(contactId);
         setWindowStatusLoading(true);
-        setConversationWindowActive(false); // avoid visual carry-over from previous contact
+        setConversationWindowActive(false);
         if (!contactId || !apiOnline) return;
 
         // Find unread inbound messages for this contact
@@ -1154,6 +1235,9 @@ function SalesCRM() {
                         onReopenConversation={handleReopenConversation}
                         conversationActive={conversationWindowActive}
                         windowStatusLoading={windowStatusLoading}
+                        conversationResponse={conversationResponse}
+                        summaryLoading={summaryLoading}
+                        summaryError={summaryError}
                     />
                 }
                 detail={

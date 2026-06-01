@@ -183,3 +183,26 @@ export interface ApiContactInteractionsResponse {
     total: number;
     message?: string;
 }
+
+// ─── AI Conversation Summary (smart endpoint) ───────────────────────────────
+
+export interface AISummaryData {
+    categoria: string;
+    resumen: string;
+    siguiente_paso: string;
+    urgencia: 'Alta' | 'Media' | 'Baja' | string;
+}
+
+export interface ApiConversationResponseActive {
+    status: 'active';
+    data: ApiMessageOut[];
+}
+
+export interface ApiConversationResponseClosed {
+    status: 'closed';
+    data: AISummaryData | never[];
+}
+
+export type ApiConversationResponse =
+    | ApiConversationResponseActive
+    | ApiConversationResponseClosed;

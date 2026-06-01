@@ -1,9 +1,12 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Avatar } from '../common/Avatar';
 import { EmptyState } from '../common/EmptyState';
+import { Spinner } from '../common/Spinner';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
+import { AISummaryCard } from './AISummaryCard';
 import type { Contact, Message, Template } from '../../types/models';
+import type { ApiConversationResponse, AISummaryData } from '../../types/api';
 import { formatDate } from '../../utils/formatters';
 import { IconButton } from '../common/IconButton';
 import { validateFile } from '../../utils/fileUtils';
@@ -25,6 +28,9 @@ interface ChatPanelProps {
     onReopenConversation?: () => Promise<{ success: boolean; error?: string }>;
     conversationActive?: boolean;
     windowStatusLoading?: boolean;
+    conversationResponse?: ApiConversationResponse | null;
+    summaryLoading?: boolean;
+    summaryError?: string | null;
 }
 
 interface DateGroup {
@@ -90,6 +96,9 @@ export function ChatPanel({
     onReopenConversation,
     conversationActive,
     windowStatusLoading = false,
+    conversationResponse = null,
+    summaryLoading = false,
+    summaryError = null,
 }: ChatPanelProps) {
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -194,6 +203,11 @@ export function ChatPanel({
     }, [messages.length]);
 
     const dateGroups = useMemo(() => groupByDate(messages), [messages]);
+
+    // ── Derive conversation summary state ─────────────────────────────────
+    const isClosed = conversationResponse?.status === 'closed';
+    const summaryReady = isClosed && !Array.isArray(conversationResponse?.data);
+    const summaryProcessing = isClosed && Array.isArray(conversationResponse?.data);
 
     if (!contact) {
         return (
@@ -305,35 +319,64 @@ export function ChatPanel({
                 </div>
             </header>
 
-            {/* Messages area */}
+            {/* Messages area — visual router */}
             <div className="flex-1 overflow-y-auto px-6 py-4 bg-[#f9fafb] bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:20px_20px]">
-                {dateGroups.map((group) => (
-                    <div key={group.label}>
-                        <div className="flex justify-center my-4">
-                            <span className="bg-white/90 backdrop-blur-sm text-[11px] font-medium text-gray-500 px-4 py-1.5 rounded-full shadow-sm border border-gray-100">
-                                {group.label}
-                            </span>
+                {summaryReady ? (
+                    // Caso B — AI summary ready
+                    <AISummaryCard data={conversationResponse!.data as AISummaryData} />
+                ) : summaryProcessing ? (
+                    // Caso C — AI processing
+                    <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-6">
+                        <div className="w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center text-2xl animate-pulse">
+                            🤖
                         </div>
-                        {group.messages.map((msg) => (
-                            <MessageBubble key={msg.id} message={msg} contactName={contact?.displayName} onRetryMedia={onRetryMedia} />
-                        ))}
+                        <p className="text-sm font-medium text-gray-600">Generando resumen de la IA...</p>
+                        <p className="text-xs text-gray-400">Esto puede tardar unos segundos</p>
                     </div>
-                ))}
+                ) : summaryError ? (
+                    // Error state
+                    <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-6">
+                        <span className="text-2xl">⚠️</span>
+                        <p className="text-sm font-medium text-red-600">{summaryError}</p>
+                    </div>
+                ) : summaryLoading ? (
+                    // POST fired — waiting for first poll response
+                    <div className="flex flex-col items-center justify-center h-full gap-3">
+                        <Spinner size="md" />
+                        <p className="text-sm text-gray-400">Cerrando conversación...</p>
+                    </div>
+                ) : (
+                    // Normal active conversation
+                    <>
+                        {dateGroups.map((group) => (
+                            <div key={group.label}>
+                                <div className="flex justify-center my-4">
+                                    <span className="bg-white/90 backdrop-blur-sm text-[11px] font-medium text-gray-500 px-4 py-1.5 rounded-full shadow-sm border border-gray-100">
+                                        {group.label}
+                                    </span>
+                                </div>
+                                {group.messages.map((msg) => (
+                                    <MessageBubble key={msg.id} message={msg} contactName={contact?.displayName} onRetryMedia={onRetryMedia} />
+                                ))}
+                            </div>
+                        ))}
 
-                {messages.length === 0 && (
-                    <div className="text-center text-body text-gray-400 mt-8">
-                        {contact.phone ? (
-                            'No hay mensajes aún. Envía un mensaje para iniciar la conversación.'
-                        ) : (
-                            <div className="space-y-2">
-                                <div className="text-orange-500 font-medium">⚠️ Sin número de teléfono</div>
-                                <div className="text-sm">Este contacto no tiene un número asociado. Agrega un número en Airtable para poder enviar mensajes.</div>
+                        {messages.length === 0 && (
+                            <div className="text-center text-body text-gray-400 mt-8">
+                                {contact.phone ? (
+                                    'No hay mensajes aún. Envía un mensaje para iniciar la conversación.'
+                                ) : (
+                                    <div className="space-y-2">
+                                        <div className="text-orange-500 font-medium">⚠️ Sin número de teléfono</div>
+                                        <div className="text-sm">Este contacto no tiene un número asociado. Agrega un número en Airtable para poder enviar mensajes.</div>
+                                    </div>
+                                )}
                             </div>
                         )}
-                    </div>
-                )}
 
-                <div ref={messagesEndRef} />
+                        <div ref={messagesEndRef} />
+                    </>
+                )}
             </div>
 
             {/* 24h window expired banner */}
@@ -375,18 +418,18 @@ export function ChatPanel({
                 </div>
             )}
 
-            {/* Input — hidden when conversation expired */}
+            {/* Input — hidden when window expired or conversation closed */}
             {(isWindowActive || windowStatusLoading) && (
-                <ChatInput 
-                    onSend={onSend} 
-                    onSendMedia={onSendMedia} 
-                    onSendMetaTemplate={onSendMetaTemplate} 
-                    onSelectAirtableTemplate={onSelectAirtableTemplate} 
-                    templates={templates} 
-                    sending={sending} 
+                <ChatInput
+                    onSend={onSend}
+                    onSendMedia={onSendMedia}
+                    onSendMetaTemplate={onSendMetaTemplate}
+                    onSelectAirtableTemplate={onSelectAirtableTemplate}
+                    templates={templates}
+                    sending={sending}
                     disabled={!contact.phone}
-                    pendingDraft={pendingDraft} 
-                    onPendingDraftConsumed={onPendingDraftConsumed} 
+                    pendingDraft={pendingDraft}
+                    onPendingDraftConsumed={onPendingDraftConsumed}
                     contact={contact}
                 />
             )}
