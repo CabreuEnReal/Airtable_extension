@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from '@airtable/blocks/interface/ui';
-import type { EmailMessage, ParsedMessage, Notification } from '../../types/models';
-import { parseEmailThread } from '../../utils/emailParser';
+import type { Conversation, ConversationMessage, Notification } from '../../types/models';
 import { Avatar } from '../common/Avatar';
 import { EmptyState } from '../common/EmptyState';
 import { Spinner } from '../common/Spinner';
@@ -37,42 +36,37 @@ function formatFullDate(dateStr: string): string {
     });
 }
 
-// ─── Email list item ──────────────────────────────────────────────────────────
+// ─── Conversation list item ───────────────────────────────────────────────────
 
-function EmailListItem({ email, onClick }: { email: EmailMessage; onClick: () => void }) {
-    const replyCount = email.replies?.length ?? 0;
-
+function ConversationListItem({ conversation, onClick }: { conversation: Conversation; onClick: () => void }) {
     return (
         <button
             onClick={onClick}
             className="w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 active:bg-gray-100 transition-colors"
         >
             <div className="flex items-start gap-3">
-                <Avatar name={email.from.name} size="sm" />
+                <Avatar name={conversation.subject} size="sm" />
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-0.5">
-                        <span className={`text-[11px] truncate ${email.isRead ? 'text-gray-600' : 'text-gray-900 font-semibold'}`}>
-                            {email.from.name}
+                        <span className="text-[11px] truncate text-gray-900 font-semibold">
+                            {conversation.subject}
                         </span>
                         <div className="flex items-center gap-1.5 shrink-0">
-                            {replyCount > 0 && (
+                            {conversation.messageCount > 1 && (
                                 <span className="text-[10px] text-gray-400 bg-gray-100 rounded-full px-1.5 py-0.5">
-                                    {replyCount + 1}
+                                    {conversation.messageCount}
                                 </span>
                             )}
+                            {conversation.hasAttachments && (
+                                <span className="text-[10px] text-gray-400">📎</span>
+                            )}
                             <span className="text-[10px] text-gray-400">
-                                {formatEmailDate(email.receivedDateTime)}
+                                {formatEmailDate(conversation.lastActivity)}
                             </span>
                         </div>
                     </div>
-                    <div className={`text-[11px] truncate mb-0.5 ${email.isRead ? 'text-gray-500' : 'text-gray-800 font-medium'}`}>
-                        {email.subject}
-                    </div>
-                    <div className="text-[10px] text-gray-400 truncate">{email.bodyPreview}</div>
+                    <div className="text-[10px] text-gray-400 truncate">{conversation.lastMessagePreview}</div>
                 </div>
-                {!email.isRead && (
-                    <div className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1" />
-                )}
             </div>
         </button>
     );
@@ -80,18 +74,16 @@ function EmailListItem({ email, onClick }: { email: EmailMessage; onClick: () =>
 
 // ─── Thread message bubble ────────────────────────────────────────────────────
 
-function ThreadBubble({ message, contactEmail }: { message: ParsedMessage; contactEmail: string }) {
-    // direction takes precedence; fall back to email comparison
-    const isSent = message.direction
-        ? message.direction === 'sent'
-        : message.from.email !== contactEmail;
+function ThreadBubble({ message, contactEmail }: { message: ConversationMessage; contactEmail: string }) {
+    const isSent = message.direction === 'sent'
+        || (message.direction !== 'received' && message.from.email !== contactEmail);
 
     return (
         <div className={`flex flex-col gap-1 ${isSent ? 'items-end' : 'items-start'}`}>
             <div className="flex items-center gap-1.5 px-1">
                 {!isSent && <Avatar name={message.from.name} size="sm" />}
                 <span className="text-[10px] text-gray-400">
-                    {message.from.name} · {formatFullDate(message.date)}
+                    {message.from.name} · {formatFullDate(message.receivedDateTime)}
                 </span>
             </div>
             <div
@@ -102,8 +94,11 @@ function ThreadBubble({ message, contactEmail }: { message: ParsedMessage; conta
                 } ${message.status === 'sending' ? 'opacity-70' : ''}`}
             >
                 <p className="text-xs leading-relaxed whitespace-pre-wrap">
-                    {message.content || 'Sin contenido'}
+                    {message.body || 'Sin contenido'}
                 </p>
+                {message.hasAttachments && (
+                    <span className="text-[10px] opacity-60 ml-1 block mt-1">📎 Adjunto</span>
+                )}
                 {message.status === 'sending' && (
                     <div className="flex items-center gap-1 mt-1.5">
                         <Spinner size="sm" />
@@ -118,29 +113,49 @@ function ThreadBubble({ message, contactEmail }: { message: ParsedMessage; conta
     );
 }
 
+// ─── File helpers ────────────────────────────────────────────────────────────
+
+function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+function fileIcon(type: string): string {
+    if (type.startsWith('image/')) return '🖼';
+    if (type === 'application/pdf') return '📄';
+    if (type.startsWith('video/')) return '🎬';
+    if (type.startsWith('audio/')) return '🎵';
+    return '📎';
+}
+
 // ─── Thread view ──────────────────────────────────────────────────────────────
 
 function ThreadView({
-    email,
+    conversation,
     contactEmail,
     onBack,
     onSendReply,
     replyText,
     setReplyText,
+    attachments,
+    setAttachments,
 }: {
-    email: EmailMessage;
+    conversation: Conversation;
     contactEmail: string;
     onBack: () => void;
     onSendReply: (replyText: string) => Promise<void>;
     replyText: string;
     setReplyText: (v: string) => void;
+    attachments: File[];
+    setAttachments: (files: File[]) => void;
 }) {
     const [isSending, setIsSending] = useState(false);
-
-    // parsedThread already includes optimistic messages injected by handleSendReply
-    const allMessages: ParsedMessage[] = email.parsedThread && email.parsedThread.length > 0
-        ? email.parsedThread
-        : [{ id: email.id, content: email.body || email.bodyPreview || '', from: email.from, date: email.receivedDateTime, isOriginal: true }];
+    const [isDragging, setIsDragging] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     async function handleSend() {
         if (!replyText.trim() || isSending) return;
@@ -159,6 +174,31 @@ function ThreadView({
         }
     }
 
+    function addFiles(files: FileList | null) {
+        if (!files) return;
+        setAttachments([...attachments, ...Array.from(files)]);
+    }
+
+    function removeAttachment(index: number) {
+        setAttachments(attachments.filter((_, i) => i !== index));
+    }
+
+    function handleDragOver(e: React.DragEvent) {
+        e.preventDefault();
+        setIsDragging(true);
+    }
+
+    function handleDragLeave(e: React.DragEvent) {
+        e.preventDefault();
+        setIsDragging(false);
+    }
+
+    function handleDrop(e: React.DragEvent) {
+        e.preventDefault();
+        setIsDragging(false);
+        addFiles(e.dataTransfer.files);
+    }
+
     return (
         <div className="flex flex-col h-full overflow-hidden">
             <div className="px-3 py-2.5 border-b border-gray-100 shrink-0">
@@ -172,15 +212,15 @@ function ThreadView({
 
             <div className="px-4 py-2.5 border-b border-gray-100 shrink-0 bg-gray-50">
                 <h3 className="text-xs font-semibold text-gray-800 leading-snug truncate">
-                    {email.subject}
+                    {conversation.subject}
                 </h3>
                 <span className="text-[10px] text-gray-400">
-                    {allMessages.length} mensaje{allMessages.length !== 1 ? 's' : ''} en el hilo
+                    {conversation.messages.length} mensaje{conversation.messages.length !== 1 ? 's' : ''} en el hilo
                 </span>
             </div>
 
             <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
-                {allMessages.map(msg => (
+                {conversation.messages.map(msg => (
                     <ThreadBubble
                         key={msg.id}
                         message={msg}
@@ -189,17 +229,50 @@ function ThreadView({
                 ))}
             </div>
 
-            <div className="px-3 py-2.5 border-t border-gray-100 shrink-0 bg-white">
+            <div
+                className={`px-3 py-2.5 border-t shrink-0 bg-white transition-colors ${isDragging ? 'border-primary bg-blue-50' : 'border-gray-100'}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+            >
+                {/* Attachment badges */}
+                {attachments.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2 mb-2">
+                        {attachments.map((file, idx) => (
+                            <div key={idx} className="flex items-center gap-1.5 bg-gray-100 rounded-full px-2 py-1">
+                                <span className="text-[11px] leading-none">{fileIcon(file.type)}</span>
+                                <span className="text-[10px] text-gray-700 font-medium max-w-[120px] truncate">{file.name}</span>
+                                <span className="text-[9px] text-gray-400 max-w-[80px] truncate">{file.type || 'archivo'}</span>
+                                <button
+                                    onClick={() => removeAttachment(idx)}
+                                    className="text-gray-500 hover:text-red-500 cursor-pointer text-[11px] leading-none ml-0.5 transition-colors"
+                                    title="Quitar adjunto"
+                                >
+                                    ×
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
                 <div className="flex items-end gap-2 border border-gray-200 rounded-xl px-3 py-2 focus-within:border-primary transition-colors">
                     <textarea
                         value={replyText}
                         onChange={e => setReplyText(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder="Escribe tu respuesta..."
+                        placeholder={isDragging ? 'Suelta los archivos aquí...' : 'Escribe tu respuesta...'}
                         rows={2}
                         disabled={isSending}
                         className="flex-1 resize-none text-xs text-gray-700 placeholder-gray-400 outline-none bg-transparent leading-relaxed disabled:opacity-50"
                     />
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isSending}
+                        className="shrink-0 w-7 h-7 flex items-center justify-center text-gray-400 hover:text-primary disabled:opacity-40 transition-colors"
+                        title="Adjuntar archivo"
+                    >
+                        📎
+                    </button>
                     <button
                         onClick={handleSend}
                         disabled={isSending || !replyText.trim()}
@@ -209,8 +282,15 @@ function ThreadView({
                     </button>
                 </div>
                 <p className="text-[10px] text-gray-400 mt-1 px-1">
-                    Enter para enviar · Shift+Enter nueva línea
+                    Enter para enviar · Shift+Enter nueva línea · Arrastra archivos aquí
                 </p>
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={e => addFiles(e.target.files)}
+                />
             </div>
         </div>
     );
@@ -227,20 +307,22 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
     const [isMsConnected, setIsMsConnected] = useState<boolean | null>(null);
     const [isConnecting, setIsConnecting] = useState(false);
     const [isLoadingEmails, setIsLoadingEmails] = useState(false);
-    const [emails, setEmails] = useState<EmailMessage[]>([]);
-    const [selectedEmail, setSelectedEmail] = useState<EmailMessage | null>(null);
+    const [conversations, setConversations] = useState<Conversation[]>([]);
+    const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
     const [notification, setNotification] = useState<Notification | null>(null);
     const [replyText, setReplyText] = useState('');
+    const [attachments, setAttachments] = useState<File[]>([]);
 
     // Reset when contact changes
     useEffect(() => {
-        setEmails([]);
-        setSelectedEmail(null);
+        setConversations([]);
+        setSelectedConversation(null);
         setIsMsConnected(null);
         setReplyText('');
+        setAttachments([]);
     }, [contactEmail]);
 
-    // ─── Phase 2: load emails ─────────────────────────────────────────────────
+    // ─── Phase 2: load conversations ──────────────────────────────────────────
 
     const loadEmails = useCallback(async () => {
         if (!contactEmail || !airtableUserId) return;
@@ -256,16 +338,8 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
             }
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            const rawEmails: EmailMessage[] = Array.isArray(data) ? data : (data.emails ?? []);
-            const withThreads = rawEmails.map(email => ({
-                ...email,
-                parsedThread: parseEmailThread(
-                    email.body || email.bodyPreview || '',
-                    email.from,
-                    email.receivedDateTime
-                ),
-            }));
-            setEmails(withThreads);
+            const convList: Conversation[] = data.conversations ?? [];
+            setConversations(convList);
             setIsMsConnected(true);
         } catch (err: any) {
             setIsMsConnected(prev => prev ?? false);
@@ -340,8 +414,8 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
             setNotification({ id: Date.now().toString(), type: 'error', text: 'El mensaje no puede estar vacío' });
             return;
         }
-        if (!selectedEmail) {
-            setNotification({ id: Date.now().toString(), type: 'error', text: 'No hay email seleccionado' });
+        if (!selectedConversation) {
+            setNotification({ id: Date.now().toString(), type: 'error', text: 'No hay conversación seleccionada' });
             return;
         }
         if (!contactEmail) {
@@ -354,29 +428,43 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
         }
 
         const formattedBodyText = replyTextParam.replace(/\n/g, '<br/>');
+
+        // Convert attachments to Microsoft Graph Base64 format
+        const formattedAttachments = await Promise.all(
+            attachments.map(async (file) => ({
+                '@odata.type': '#microsoft.graph.fileAttachment',
+                name: file.name,
+                contentType: file.type || 'application/octet-stream',
+                contentBytes: await fileToBase64(file),
+            }))
+        );
+
         const myEmail = (session as any)?.currentUser?.email ?? 'unknown@example.com';
         const myName = (session as any)?.currentUser?.name ?? 'Yo';
 
-        const tempParsedMessage: ParsedMessage = {
+        const tempMessage: ConversationMessage = {
             id: `temp-${Date.now()}`,
-            content: replyTextParam,
+            conversationId: selectedConversation.conversationId,
+            hasAttachments: attachments.length > 0,
+            body: replyTextParam,
             from: { name: myName, email: myEmail },
-            date: new Date().toISOString(),
-            isOriginal: false,
-            status: 'sending',
+            receivedDateTime: new Date().toISOString(),
             direction: 'sent',
+            status: 'sending',
         };
 
-        const previousEmailState: EmailMessage = JSON.parse(JSON.stringify(selectedEmail));
+        const previousConversationState: Conversation = JSON.parse(JSON.stringify(selectedConversation));
         const previousReplyText = replyTextParam;
 
-        const updatedEmail: EmailMessage = {
-            ...selectedEmail,
-            parsedThread: [...(selectedEmail.parsedThread ?? []), tempParsedMessage],
+        const updatedConversation: Conversation = {
+            ...selectedConversation,
+            messages: [...selectedConversation.messages, tempMessage],
         };
 
-        setSelectedEmail(updatedEmail);
-        setEmails(prevEmails => prevEmails.map(email => email.id === selectedEmail.id ? updatedEmail : email));
+        setSelectedConversation(updatedConversation);
+        setConversations(prev => prev.map(c =>
+            c.conversationId === selectedConversation.conversationId ? updatedConversation : c
+        ));
         setReplyText('');
         setNotification({ id: Date.now().toString(), type: 'info', text: 'Enviando mensaje...' });
 
@@ -386,9 +474,14 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
             console.log('📦 Body a enviar:', {
                 airtableUserId,
                 toEmail: contactEmail,
-                subject: `RE: ${selectedEmail.subject}`,
+                subject: `RE: ${selectedConversation.subject}`,
                 bodyText: formattedBodyText,
-                messageId: selectedEmail.id,
+                messageId: selectedConversation.latestMessageId,
+                attachments: formattedAttachments.map(a => ({
+                    name: a.name,
+                    contentType: a.contentType,
+                    contentBytesLength: a.contentBytes.length,
+                })),
             });
 
             const response = await fetch(N8N_SEND_EMAIL_URL, {
@@ -398,11 +491,12 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    airtableUserId: airtableUserId,
+                    airtableUserId,
                     toEmail: contactEmail,
-                    subject: `RE: ${selectedEmail.subject}`,
+                    subject: `RE: ${selectedConversation.subject}`,
                     bodyText: formattedBodyText,
-                    messageId: selectedEmail.id,
+                    messageId: selectedConversation.latestMessageId,
+                    attachments: formattedAttachments,
                 }),
             });
 
@@ -420,29 +514,34 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
                 throw new Error(data.error || data.errorMessage || 'Error desconocido del servidor');
             }
 
-            const updatedEmailAfterSuccess: EmailMessage = {
-                ...updatedEmail,
-                parsedThread: (updatedEmail.parsedThread ?? []).map(msg =>
-                    msg.id === tempParsedMessage.id ? { ...msg, status: 'sent' as const } : msg
+            const updatedConversationAfterSuccess: Conversation = {
+                ...updatedConversation,
+                messages: updatedConversation.messages.map(msg =>
+                    msg.id === tempMessage.id ? { ...msg, status: 'sent' as const } : msg
                 ),
             };
-            setSelectedEmail(updatedEmailAfterSuccess);
-            setEmails(prevEmails => prevEmails.map(email => email.id === selectedEmail.id ? updatedEmailAfterSuccess : email));
+            setSelectedConversation(updatedConversationAfterSuccess);
+            setConversations(prev => prev.map(c =>
+                c.conversationId === selectedConversation.conversationId ? updatedConversationAfterSuccess : c
+            ));
 
+            setAttachments([]);
             setNotification({ id: Date.now().toString(), type: 'success', text: 'Mensaje enviado correctamente' });
             setTimeout(() => { loadEmails(); }, 1500);
 
         } catch (error) {
             console.error('❌ Error en el envío:', error);
 
-            const rollbackEmail: EmailMessage = {
-                ...previousEmailState,
-                parsedThread: (previousEmailState.parsedThread ?? []).filter(
-                    (msg: ParsedMessage) => !msg.id.startsWith('temp-')
+            const rollbackConversation: Conversation = {
+                ...previousConversationState,
+                messages: previousConversationState.messages.filter(
+                    (msg: ConversationMessage) => !msg.id.startsWith('temp-')
                 ),
             };
-            setSelectedEmail(rollbackEmail);
-            setEmails(prevEmails => prevEmails.map(email => email.id === selectedEmail.id ? rollbackEmail : email));
+            setSelectedConversation(rollbackConversation);
+            setConversations(prev => prev.map(c =>
+                c.conversationId === selectedConversation.conversationId ? rollbackConversation : c
+            ));
             setReplyText(previousReplyText);
 
             const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
@@ -462,7 +561,7 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
         );
     }
 
-    if (isMsConnected === null || (isLoadingEmails && emails.length === 0)) {
+    if (isMsConnected === null || (isLoadingEmails && conversations.length === 0)) {
         return (
             <div className="flex items-center justify-center h-full">
                 <Spinner size="md" label={isMsConnected === null ? 'Verificando conexión...' : 'Cargando correos...'} />
@@ -512,7 +611,7 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
         );
     }
 
-    if (emails.length === 0) {
+    if (conversations.length === 0) {
         return (
             <EmptyState
                 icon="📭"
@@ -522,16 +621,18 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
         );
     }
 
-    if (selectedEmail !== null) {
+    if (selectedConversation !== null) {
         return (
             <>
                 <ThreadView
-                    email={selectedEmail}
+                    conversation={selectedConversation}
                     contactEmail={contactEmail}
-                    onBack={() => setSelectedEmail(null)}
+                    onBack={() => setSelectedConversation(null)}
                     onSendReply={handleSendReply}
                     replyText={replyText}
                     setReplyText={setReplyText}
+                    attachments={attachments}
+                    setAttachments={setAttachments}
                 />
                 <Toast notification={notification} onDismiss={() => setNotification(null)} duration={3000} />
             </>
@@ -542,15 +643,15 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
         <div className="flex flex-col h-full overflow-hidden">
             <div className="px-4 py-2 border-b border-gray-100 shrink-0 bg-gray-50">
                 <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
-                    Correos ({emails.length})
+                    Correos ({conversations.length})
                 </span>
             </div>
             <div className="flex-1 overflow-y-auto">
-                {emails.map(email => (
-                    <EmailListItem
-                        key={email.id}
-                        email={email}
-                        onClick={() => setSelectedEmail(email)}
+                {conversations.map(conv => (
+                    <ConversationListItem
+                        key={conv.conversationId}
+                        conversation={conv}
+                        onClick={() => setSelectedConversation(conv)}
                     />
                 ))}
             </div>

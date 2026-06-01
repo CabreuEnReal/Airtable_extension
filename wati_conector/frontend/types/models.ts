@@ -195,6 +195,7 @@ export interface ParsedMessage {
     isOriginal: boolean;
     status?: 'sending' | 'sent' | 'failed';
     direction?: 'sent' | 'received';
+    attachments?: { name: string; type: string }[];
 }
 
 export interface EmailMessage {
@@ -214,6 +215,34 @@ export interface EmailMessage {
     threadMessages?: { isOriginal: boolean; content: string }[] | null;
     messageCount?: number;
     parsedThread?: ParsedMessage[];
+}
+
+// ─── Email Conversation hierarchy (n8n structured response) ─────────────────
+
+export interface ConversationMessage {
+    id: string;
+    conversationId: string;
+    hasAttachments: boolean;
+    body: string;
+    from: { name: string; email: string };
+    receivedDateTime: string;
+    direction: string;
+    status?: 'sending' | 'sent' | 'failed';
+}
+
+export interface Conversation {
+    conversationId: string;
+    subject: string;
+    messageCount: number;
+    hasAttachments: boolean;
+    lastActivity: string;
+    lastMessagePreview: string;
+    latestMessageId: string;
+    messages: ConversationMessage[];
+}
+
+export interface EmailApiResponse {
+    conversations: Conversation[];
 }
 
 // ─── App-level state ────────────────────────────────────────────────────────
