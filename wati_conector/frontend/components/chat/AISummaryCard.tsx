@@ -40,7 +40,7 @@ const FALLBACK: UrgencyStyle = {
     nextStepLabel:'text-gray-600',
 };
 
-const RobotIcon = () => (
+export const RobotIcon = () => (
     <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1104 1024" className="w-full h-full" preserveAspectRatio="none">
         <defs>
             <linearGradient id="RobotGradient1" gradientUnits="userSpaceOnUse" x1="456.651" y1="742.603" x2="481.441" y2="629.978">

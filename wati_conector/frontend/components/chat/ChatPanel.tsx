@@ -4,7 +4,7 @@ import { EmptyState } from '../common/EmptyState';
 import { Spinner } from '../common/Spinner';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
-import { AISummaryCard } from './AISummaryCard';
+import { AISummaryCard, RobotIcon } from './AISummaryCard';
 import type { Contact, Message, Template } from '../../types/models';
 import type { ApiConversationResponse, AISummaryData } from '../../types/api';
 import { formatDate } from '../../utils/formatters';
@@ -327,8 +327,8 @@ export function ChatPanel({
                 ) : summaryProcessing ? (
                     // Caso C — AI processing
                     <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-6">
-                        <div className="w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center text-2xl animate-pulse">
-                            🤖
+                        <div className="w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center animate-pulse" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))' }}>
+                            <RobotIcon />
                         </div>
                         <p className="text-sm font-medium text-gray-600">Generando resumen de la IA...</p>
                         <p className="text-xs text-gray-400">Esto puede tardar unos segundos</p>
