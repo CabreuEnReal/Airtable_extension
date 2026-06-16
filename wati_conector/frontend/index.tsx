@@ -1,13 +1,23 @@
-import {initializeBlock} from '@airtable/blocks/interface/ui';
+import {initializeBlock, useSession, useBase} from '@airtable/blocks/interface/ui';
 import {useState, useCallback, useEffect, useMemo, useRef} from 'react';
 import './style.css';
 
+// ─── CRM-First view state (canonical defs in types/models) ──
+import type { ViewState, ActiveChannel } from './types/models';
+
 // ─── Services & types ───────────────────────────────────────
-import type { Contact, Message, Template, Notification as AppNotification } from './types/models';
+import type { Contact, Message, Template, Interaction, InteractionType, Notification as AppNotification } from './types/models';
 import type { WhatsAppNumber, NumberStats, InboxStatus, MessageWithNumber } from './types/whatsapp';
 import type { ApiConversationResponse } from './types/api';
 import { POLLING } from './constants/config';
-import { detectBaseId, getAllContacts } from './services/airtable';
+import { detectBaseId, getAllContacts, getInteractions, getInteractionTypes, createInteraction, resolvePeopleIdByEmail } from './services/airtable';
+import { resolveOpportunityContacts, deriveChannel } from './adapters/contactAdapter';
+import { OpportunitySearchView } from './components/opportunities/OpportunitySearchView';
+import { OpportunityDetailViewA } from './components/opportunities/OpportunityDetailViewA';
+import { OpportunityDetailViewB } from './components/opportunities/OpportunityDetailViewB';
+import { ContactModal } from './components/opportunities/ContactModal';
+import { NewEmailModal } from './components/opportunities/NewEmailModal';
+import { AddNoteModal } from './components/opportunities/AddNoteModal';
 // contactAdapter imports removed — contacts loaded from Airtable via getAllContacts
 import { NumberSelector } from './components/whatsapp/NumberSelector';
 import {
@@ -55,7 +65,6 @@ import { AppLayout } from './components/layout/AppLayout';
 import { ConversationPanel } from './components/conversations/ConversationPanel';
 import { ChatPanel } from './components/chat/ChatPanel';
 import { DetailPanel } from './components/detail/DetailPanel';
-import { NotesModal } from './components/modals/NotesModal';
 import { Toast } from './components/common/Toast';
 import { Spinner } from './components/common/Spinner';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
@@ -106,6 +115,38 @@ function phoneVariants(raw: string): string[] {
 function SalesCRM() {
     useEffect(() => { detectBaseId(); }, []);
 
+    // ─── SDK Base (provides field metadata for dynamic table discovery) ──────
+    // useBase() must be called at component level; passed directly to functions
+    // that need schema metadata (avoids module-level singleton / race condition).
+    const sdkBase = useBase();
+
+    // ─── Session identity (Blocker A/B bridge) ──────────────
+    const session = useSession();
+    const currentUserEmail = (session as any)?.currentUser?.email ?? '';
+
+    // ─── CRM-First navigation state ─────────────────────────
+    const [currentView, setCurrentView] = useState<ViewState>('search');
+    const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(null);
+    const [activeChannel, setActiveChannel] = useState<ActiveChannel>('whatsapp');
+
+    // ─── Contact detail modal (Module 3) ───────────────────
+    const [isContactModalOpen, setIsContactModalOpen] = useState(false);
+    const [modalContactId, setModalContactId] = useState<string | null>(null);
+
+    // ─── New-email modal (Module 4) ─────────────────────────
+    const [isNewEmailModalOpen, setIsNewEmailModalOpen] = useState(false);
+    const [savingEmail, setSavingEmail] = useState(false);
+
+    // ─── Notes / interaction history (Puntos 8/9/10/18) ─────
+    const [interactions, setInteractions] = useState<Interaction[]>([]);
+    const [interactionTypes, setInteractionTypes] = useState<InteractionType[]>([]);
+    const [isAddNoteOpen, setIsAddNoteOpen] = useState(false);
+    const [savingNote, setSavingNote] = useState(false);
+
+    // ─── Owner identity: resolve People record id from login email ──
+    const [myPeopleId, setMyPeopleId] = useState<string | null>(null);
+    const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
+
     // ─── State ──────────────────────────────────────────────
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [messages, setMessages] = useState<Message[]>([]);
@@ -116,7 +157,6 @@ function SalesCRM() {
     const [apiOnline, setApiOnline] = useState(true);
     const [notification, setNotification] = useState<AppNotification | null>(null);
     const [showDetail, setShowDetail] = useState(true);
-    const [showNotesModal, setShowNotesModal] = useState(false);
     const [debugLogs, setDebugLogs] = useState<string[]>([]);
     const [debugMinimized, setDebugMinimized] = useState(false);
     const [lastContactsUpdate, setLastContactsUpdate] = useState<string | null>(null);
@@ -444,7 +484,7 @@ function SalesCRM() {
     }, [addLog]);
 
     // ─── Data Loading (initial load only — runs exactly ONCE) ─────────────────
-    const loadInitialData = useCallback(async () => {
+    const loadInitialData = useCallback(async (_sdkBase?: any) => {
         const startTime = performance.now();
         
         try {
@@ -465,7 +505,23 @@ function SalesCRM() {
             } catch (err: any) {
                 addLog(`⚠ Airtable contacts failed: ${(err as Error).message}`);
             }
-            
+
+            // 1b. Load interaction history + the channel/type catalog (for the note <select>)
+            try {
+                const [allInteractions, types] = await Promise.all([
+                    getInteractions(),
+                    getInteractionTypes().catch((e) => {
+                        addLog(`⚠ Interaction types failed: ${(e as Error).message}`);
+                        return [] as InteractionType[];
+                    }),
+                ]);
+                setInteractions(allInteractions);
+                setInteractionTypes(types);
+                addLog(`Airtable: ${allInteractions.length} interactions, ${types.length} types loaded`);
+            } catch (err: any) {
+                addLog(`⚠ Airtable interactions failed: ${(err as Error).message}`);
+            }
+
             // 2. Check if Python API is online
             const isOnline = await checkHealth();
             setApiOnline(isOnline);
@@ -569,8 +625,12 @@ function SalesCRM() {
         return () => { cancelled = true; clearInterval(interval); };
     }, [selectedPhoneNumber, apiOnline, addLog, updateConversationActive]);
 
-    // ─── Initial load + smart polling (stable deps — runs once) ─────────────
+    // ─── Initial load + smart polling (runs once sdkBase is available) ────────
+    // sdkBase comes from useBase() — guaranteed non-null after first render.
+    // Polling intervals are set up after the initial load completes.
     useEffect(() => {
+        if (!sdkBase) return; // wait until the SDK base object is ready
+
         let contactsInterval: ReturnType<typeof setInterval>;
         let messagesInterval: ReturnType<typeof setInterval>;
         let healthInterval: ReturnType<typeof setInterval>;
@@ -579,14 +639,13 @@ function SalesCRM() {
         const initialize = async () => {
             await initializeApiConfig();
             if (!mounted) return;
-            
-            await loadInitialData();
+
+            await loadInitialData(sdkBase); // pass base directly — no race condition
             if (!mounted) return;
-            
+
             // Polling: contacts every 30s, numbers every 30s, health every 15s
             contactsInterval = setInterval(checkContactsStatus, POLLING.CONTACTS);
             messagesInterval = setInterval(() => {
-                // Refresh numbers from DB (fast, <10ms) without skeleton
                 loadWhatsAppNumbers(false);
             }, POLLING.NUMBERS);
             healthInterval = setInterval(checkApiHealth, POLLING.API_HEALTH);
@@ -601,7 +660,7 @@ function SalesCRM() {
             clearInterval(healthInterval);
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); // Empty deps — runs exactly once on mount
+    }, [sdkBase]); // re-runs only if base instance changes (practically once)
 
     // ─── Separate polling for inbox status (depends on selectedPhoneNumber) ──
     useEffect(() => {
@@ -778,6 +837,238 @@ function SalesCRM() {
         
         return filtered;
     }, [inboxStats, messagesWithAirtableIds, selectedPhoneNumber]);
+
+    // ─── Resolve current user's People record id (Blocker B) ──
+    // Race-proof: stay in loading state until the People table read finishes.
+    // Empty email = session not hydrated yet → keep waiting (do NOT lock out).
+    useEffect(() => {
+        let cancelled = false;
+        console.log('[Identity] effect run — currentUserEmail =', JSON.stringify(currentUserEmail));
+
+        if (!currentUserEmail) {
+            // Session email not ready. Keep loading; bail out as "missing" only after a grace period.
+            setIsLoadingIdentity(true);
+            const t = setTimeout(() => {
+                if (cancelled) return;
+                console.warn('[Identity] no session email after grace period — treating as missing');
+                setMyPeopleId(null);
+                setIsLoadingIdentity(false);
+            }, 5000);
+            return () => { cancelled = true; clearTimeout(t); };
+        }
+
+        setIsLoadingIdentity(true);
+        console.log('[Identity] starting People resolve for', currentUserEmail);
+        resolvePeopleIdByEmail(currentUserEmail)
+            .then((id) => {
+                if (cancelled) return;
+                console.log('[Identity] resolve finished →', id);
+                setMyPeopleId(id);
+                setIsLoadingIdentity(false);
+                addLog(id ? `Identity resolved: People ${id}` : `⚠ No People row for ${currentUserEmail}`);
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                console.error('[Identity] resolve error:', err);
+                setMyPeopleId(null);
+                setIsLoadingIdentity(false);
+                addLog(`⚠ Identity resolve failed: ${(err as Error).message}`);
+            });
+        return () => { cancelled = true; };
+    }, [currentUserEmail, addLog]);
+
+    // ─── My opportunities (Owner-scoped pipeline, Blocker B) ──
+    const myOpportunities = useMemo(
+        () =>
+            contacts.filter(
+                (c) => c.contactType === 'opportunity' && !!myPeopleId && c.ownerId === myPeopleId,
+            ),
+        [contacts, myPeopleId],
+    );
+
+    const identityMissing = !isLoadingIdentity && !myPeopleId;
+
+    // Selected opportunity + its company siblings (owner-scoped)
+    const selectedOpportunity = useMemo(
+        () => myOpportunities.find((o) => o.id === selectedOpportunityId) ?? null,
+        [myOpportunities, selectedOpportunityId],
+    );
+    const companyOpportunities = useMemo(() => {
+        if (!selectedOpportunity) return [];
+        return myOpportunities.filter((o) => o.company === selectedOpportunity.company);
+    }, [myOpportunities, selectedOpportunity]);
+    const breadcrumbLeaf = selectedOpportunity
+        ? (selectedOpportunity.siteNames?.[0] || selectedOpportunity.jobTitle || selectedOpportunity.displayName)
+        : undefined;
+
+    // Contacts strictly scoped to the selected opportunity (shared by 2-A & 2-B)
+    const oppLinkedContacts = useMemo(
+        () => resolveOpportunityContacts(selectedOpportunity, contacts),
+        [contacts, selectedOpportunity],
+    );
+
+    // Interactions scoped to the opportunity. Primary match: Opportunity link.
+    // Fallback: linked-contact match (legacy rows without Opportunity). + optimistic.
+    const oppInteractions = useMemo(() => {
+        const contactIds = new Set(oppLinkedContacts.map((c) => c.id));
+        return interactions.filter(
+            (it) =>
+                it.isOptimistic ||
+                (selectedOpportunityId && it.opportunityId === selectedOpportunityId) ||
+                (it.contactId && contactIds.has(it.contactId)),
+        );
+    }, [interactions, oppLinkedContacts, selectedOpportunityId]);
+
+    const handleSelectOpportunity = useCallback((id: string) => {
+        setSelectedOpportunityId(id);
+        setCurrentView('opp-detail-a');
+    }, []);
+
+    const handleBackToSearch = useCallback(() => {
+        setSelectedOpportunityId(null);
+        setCurrentView('search');
+    }, []);
+
+    // Module 2-A → 2-B: open a contact's conversation (3-column view)
+    const handleOpenConversation = useCallback((contactId: string) => {
+        setSelectedContactId(contactId);
+        setCurrentView('opp-detail-b');
+    }, []);
+
+    // Module 2-B → 2-A: back to the opportunity detail
+    const handleBackToOppDetail = useCallback(() => {
+        setCurrentView('opp-detail-a');
+    }, []);
+
+    // ─── Contact modal (Module 3) ──────────────────────────
+    const handleOpenContactModal = useCallback((contactId: string) => {
+        setModalContactId(contactId);
+        setIsContactModalOpen(true);
+    }, []);
+
+    const handleCloseContactModal = useCallback(() => {
+        setIsContactModalOpen(false);
+    }, []);
+
+    const modalContact = useMemo(
+        () => contacts.find((c) => c.id === modalContactId) ?? null,
+        [contacts, modalContactId],
+    );
+
+    // Quick-action: jump to conversation on a channel, then close the modal
+    const handleStartConversationFromModal = useCallback((channel: ActiveChannel) => {
+        setActiveChannel(channel);
+        if (modalContactId) setSelectedContactId(modalContactId);
+        setCurrentView('opp-detail-b');
+        setIsContactModalOpen(false);
+    }, [modalContactId]);
+
+    // ─── Send email → Airtable Interaction stub (real send TBD) ─────────────
+    // Finds the "Correo" type id from the loaded catalog, falls back to first type.
+    const handleSendEmail = useCallback(async ({ to, subject, message }: { to: string; subject: string; message: string }) => {
+        const emailType = interactionTypes.find((t) =>
+            ['correo', 'email', 'mail'].some((n) => t.name.toLowerCase().includes(n))
+        ) ?? interactionTypes[0] ?? null;
+
+        if (!emailType) {
+            notify('error', 'No se encontró tipo de interacción "Correo". Verifica el catálogo.');
+            return;
+        }
+
+        const targetContact =
+            oppLinkedContacts.find((c) => c.id === selectedContactId) ?? oppLinkedContacts[0] ?? null;
+
+        const notes = [subject && `Asunto: ${subject}`, message].filter(Boolean).join('\n');
+
+        const tempId = `temp_email_${Date.now()}`;
+        const optimistic: Interaction = {
+            id: tempId,
+            name: `Correo · ${selectedOpportunity?.displayName || ''}`,
+            type: [emailType.name],
+            dateExecuted: new Date().toISOString().slice(0, 10),
+            notes,
+            team: [],
+            accountId: '',
+            contactId: targetContact?.id ?? '',
+            opportunityId: selectedOpportunityId ?? '',
+            channel: 'correo',
+            isOptimistic: true,
+        };
+
+        setSavingEmail(true);
+        setInteractions((prev) => [optimistic, ...prev]);
+
+        try {
+            // TODO: wire real email send (Graph API / n8n) here before createInteraction.
+            const saved = await createInteraction({
+                notes,
+                typeId: emailType.id,
+                opportunityId: selectedOpportunityId ?? undefined,
+                contactId: targetContact?.id,
+                participantEmail: currentUserEmail || undefined,
+            });
+            setInteractions((prev) => prev.map((it) => (it.id === tempId ? saved : it)));
+            notify('success', `Correo registrado en historial (envío real: pendiente)`);
+            setIsNewEmailModalOpen(false);
+        } catch (err: any) {
+            addLog(`ERROR sendEmail: ${(err as Error).message}`);
+            setInteractions((prev) => prev.filter((it) => it.id !== tempId));
+            notify('error', `Error al registrar correo: ${(err as Error).message}`);
+        } finally {
+            setSavingEmail(false);
+        }
+    }, [interactionTypes, oppLinkedContacts, selectedContactId, selectedOpportunity, selectedOpportunityId, currentUserEmail, notify, addLog]);
+
+    // ─── Save note → Airtable Interaction + optimistic UI (Punto 9/10) ──
+    // typeId = chosen catalog row ("Type LR"). Channel for the optimistic badge
+    // is derived from that row's name.
+    const handleSaveNote = useCallback(async (notes: string, typeId: string) => {
+        // Target contact: the active conversation contact, else first linked contact.
+        const targetContact =
+            oppLinkedContacts.find((c) => c.id === selectedContactId) ?? oppLinkedContacts[0] ?? null;
+        const title = selectedOpportunity?.displayName || selectedOpportunity?.company;
+        const typeName = interactionTypes.find((t) => t.id === typeId)?.name ?? '';
+        const channel = deriveChannel([typeName], '');
+
+        const tempId = `temp_note_${Date.now()}`;
+        const optimistic: Interaction = {
+            id: tempId,
+            name: `${typeName || 'Nota'} · ${title || ''}`,
+            type: typeName ? [typeName] : [],
+            dateExecuted: new Date().toISOString().slice(0, 10),
+            notes,
+            team: [],
+            accountId: '',
+            contactId: targetContact?.id ?? '',
+            opportunityId: selectedOpportunityId ?? '',
+            channel,
+            isOptimistic: true,
+        };
+
+        setSavingNote(true);
+        setInteractions((prev) => [optimistic, ...prev]);
+
+        try {
+            const saved = await createInteraction({
+                notes,
+                typeId,
+                opportunityId: selectedOpportunityId ?? undefined,
+                contactId: targetContact?.id,
+                participantEmail: currentUserEmail || undefined,
+            });
+            // Replace optimistic entry with the Airtable-confirmed record.
+            setInteractions((prev) => prev.map((it) => (it.id === tempId ? saved : it)));
+            notify('success', 'Nota guardada');
+            setIsAddNoteOpen(false);
+        } catch (err: any) {
+            addLog(`ERROR saveNote: ${(err as Error).message}`);
+            // Roll back the optimistic entry on failure.
+            setInteractions((prev) => prev.filter((it) => it.id !== tempId));
+            notify('error', `Error al guardar nota: ${(err as Error).message}`);
+        } finally {
+            setSavingNote(false);
+        }
+    }, [oppLinkedContacts, selectedContactId, selectedOpportunity, selectedOpportunityId, interactionTypes, myPeopleId, notify, addLog]);
 
     // ─── Derived state ──────────────────────────────────────
     const selectedContact = contacts.find((c) => c.id === selectedContactId) ?? null;
@@ -1191,101 +1482,161 @@ function SalesCRM() {
         );
     }
 
-    // ─── Render ─────────────────────────────────────────────
-    return (
-        <div className="h-screen w-full">
-            {/* API offline banner */}
-            {!apiOnline && (
-                <div className="bg-orange text-white text-xs text-center py-1 px-2">
-                    ⚠ API de WhatsApp no disponible — mostrando solo contactos de Airtable
-                </div>
-            )}
-
-            <AppLayout
-                conversations={
-                    <ConversationPanel
-                        contacts={contacts}
-                        messages={messagesWithAirtableIds}
-                        selectedContactId={selectedContactId}
-                        onSelectContact={handleSelectContact}
-                        availableNumbers={availableNumbers}
-                        selectedPhoneNumber={selectedPhoneNumber}
-                        inboxStats={filteredInboxStats}
-                        onNumberSelect={setSelectedPhoneNumber}
-                        onNumberSync={handleSyncNumbers}
-                        numbersSyncing={numbersSyncing}
-                        numbersLoading={numbersLoading}
-                    />
-                }
-                chat={
-                    <ChatPanel
-                        contact={selectedContact}
-                        messages={chatMessagesToDisplay}
-                        templates={templates}
-                        onSend={handleSend}
-                        onSendMedia={handleSendMedia}
-                        onSendMetaTemplate={handleSendMetaTemplate}
-                        onSelectAirtableTemplate={handleSelectAirtableTemplate}
-                        onRetryMedia={handleRetryMedia}
-                        sending={sending}
-                        onOpenDetail={() => setShowDetail(!showDetail)}
-                        onOpenNotes={() => setShowNotesModal(true)}
-                        pendingDraft={pendingDraft}
-                        onPendingDraftConsumed={() => setPendingDraft(null)}
-                        onReopenConversation={handleReopenConversation}
-                        conversationActive={conversationWindowActive}
-                        windowStatusLoading={windowStatusLoading}
-                        conversationResponse={conversationResponse}
-                        summaryLoading={summaryLoading}
-                        summaryError={summaryError}
-                    />
-                }
-                detail={
-                    showDetail && selectedContact ? (
-                        <DetailPanel
-                            contact={selectedContact}
-                            contacts={contacts}
-                            messages={chatMessagesToDisplay}
-                            onOpenNotes={() => setShowNotesModal(true)}
-                            onClose={() => setShowDetail(false)}
-                            onSelectContact={(id) => handleSelectContact(id)}
-                        />
-                    ) : undefined
-                }
-            />
-
-            {/* Notes Modal */}
-            <NotesModal
-                open={showNotesModal}
-                onClose={() => setShowNotesModal(false)}
-                contactName={selectedContact?.displayName ?? ''}
-                airtableContactId={selectedContactId ?? undefined}
-            />
-
-            {/* Toast */}
-            <Toast
-                notification={notification}
-                onDismiss={() => setNotification(null)}
-            />
-
-            {/* Debug log panel */}
-            {debugLogs.length > 0 && (
-                <div className={`fixed bottom-0 left-0 right-0 bg-gray-900/95 z-40 transition-all ${debugMinimized ? '' : 'max-h-28 overflow-y-auto p-2'}`}>
-                    <div className={`flex justify-between items-center ${debugMinimized ? 'px-2 py-1' : 'mb-1'}`}>
-                        <button onClick={() => setDebugMinimized(!debugMinimized)} className="text-xs text-gray-400 hover:text-white font-mono flex items-center gap-1">
-                            <span>{debugMinimized ? '▲' : '▼'}</span> Debug Log ({debugLogs.length})
-                        </button>
-                        <div className="flex gap-2">
-                            {!debugMinimized && <button onClick={() => setDebugLogs([])} className="text-xs text-gray-400 hover:text-white">Clear</button>}
-                            <button onClick={() => { setDebugLogs([]); setDebugMinimized(false); }} className="text-xs text-gray-400 hover:text-white">✕</button>
-                        </div>
+    // ─── Render: MODULE 1 — Opportunity search (CRM-first root) ──
+    if (currentView === 'search') {
+        return (
+            <div className="h-screen w-full">
+                {!apiOnline && (
+                    <div className="bg-orange text-white text-xs text-center py-1 px-2">
+                        ⚠ API de WhatsApp no disponible — mostrando solo datos de Airtable
                     </div>
-                    {!debugMinimized && debugLogs.map((log: string, i: number) => (
-                        <div key={i} className={`text-xs font-mono ${log.includes('ERROR') ? 'text-red' : 'text-green-light1'}`}>{log}</div>
-                    ))}
-                </div>
-            )}
-        </div>
+                )}
+                <OpportunitySearchView
+                    opportunities={myOpportunities}
+                    onSelectOpportunity={handleSelectOpportunity}
+                    identityResolved={!isLoadingIdentity}
+                    identityMissing={identityMissing}
+                    ownerName={(session as any)?.currentUser?.name}
+                />
+                <Toast notification={notification} onDismiss={() => setNotification(null)} />
+            </div>
+        );
+    }
+
+    // ─── Render: MODULE 2-A — Opportunity detail (2 columns) ──
+    if (currentView === 'opp-detail-a') {
+        if (!selectedOpportunity) {
+            // Opportunity vanished (e.g. data refresh) → bounce to search
+            return (
+                <AppLayout onBack={handleBackToSearch}>
+                    <Spinner size="lg" label="Cargando oportunidad..." />
+                </AppLayout>
+            );
+        }
+        return (
+            <AppLayout
+                company={selectedOpportunity.company}
+                oppName={breadcrumbLeaf}
+                onBack={handleBackToSearch}
+            >
+                <OpportunityDetailViewA
+                    companyOpportunities={companyOpportunities}
+                    selectedOpportunity={selectedOpportunity}
+                    onSelectOpportunity={setSelectedOpportunityId}
+                    linkedContacts={oppLinkedContacts}
+                    activeChannel={activeChannel}
+                    onChannelChange={setActiveChannel}
+                    onOpenConversation={handleOpenConversation}
+                    onViewContact={handleOpenContactModal}
+                    onNewEmail={() => setIsNewEmailModalOpen(true)}
+                    onAddInteraction={() => setIsAddNoteOpen(true)}
+                    interactions={oppInteractions}
+                />
+                <ContactModal
+                    open={isContactModalOpen}
+                    onClose={handleCloseContactModal}
+                    contact={modalContact}
+                    onStartConversation={handleStartConversationFromModal}
+                />
+                <NewEmailModal
+                    open={isNewEmailModalOpen}
+                    onClose={() => setIsNewEmailModalOpen(false)}
+                    contacts={oppLinkedContacts}
+                    fromEmail={currentUserEmail}
+                    saving={savingEmail}
+                    onSend={handleSendEmail}
+                />
+                <AddNoteModal
+                    open={isAddNoteOpen}
+                    onClose={() => setIsAddNoteOpen(false)}
+                    activeChannel={activeChannel}
+                    interactionTypes={interactionTypes}
+                    targetName={breadcrumbLeaf || selectedOpportunity.displayName}
+                    saving={savingNote}
+                    onSave={handleSaveNote}
+                />
+                <Toast notification={notification} onDismiss={() => setNotification(null)} />
+            </AppLayout>
+        );
+    }
+
+    // ─── Render: MODULE 2-B — Conversation detail (3 columns) ──
+    if (!selectedOpportunity || !selectedContact) {
+        // Lost context (data refresh / direct entry) → bounce up to A or search
+        return (
+            <AppLayout onBack={handleBackToOppDetail} onCrumbSearch={handleBackToSearch}>
+                <Spinner size="lg" label="Cargando conversación..." />
+            </AppLayout>
+        );
+    }
+    return (
+        <AppLayout
+            company={selectedOpportunity.company}
+            oppName={breadcrumbLeaf}
+            contactName={selectedContact.displayName}
+            onBack={handleBackToOppDetail}
+            onCrumbSearch={handleBackToSearch}
+            onCrumbOpp={handleBackToOppDetail}
+        >
+            <OpportunityDetailViewB
+                opportunity={selectedOpportunity}
+                contact={selectedContact}
+                linkedContacts={oppLinkedContacts}
+                onSelectContact={setSelectedContactId}
+                activeChannel={activeChannel}
+                onChannelChange={setActiveChannel}
+                onViewContact={handleOpenContactModal}
+                onNewEmail={() => setIsNewEmailModalOpen(true)}
+                onAddInteraction={() => setIsAddNoteOpen(true)}
+                onAddNote={() => setIsAddNoteOpen(true)}
+                interactions={oppInteractions}
+                messages={chatMessagesToDisplay}
+                templates={templates}
+                onSend={handleSend}
+                onSendMedia={handleSendMedia}
+                onSendMetaTemplate={handleSendMetaTemplate}
+                onSelectAirtableTemplate={handleSelectAirtableTemplate}
+                onRetryMedia={handleRetryMedia}
+                sending={sending}
+                pendingDraft={pendingDraft}
+                onPendingDraftConsumed={() => setPendingDraft(null)}
+                onReopenConversation={handleReopenConversation}
+                conversationActive={conversationWindowActive}
+                windowStatusLoading={windowStatusLoading}
+                conversationResponse={conversationResponse}
+                summaryLoading={summaryLoading}
+                summaryError={summaryError}
+            />
+
+            <ContactModal
+                open={isContactModalOpen}
+                onClose={handleCloseContactModal}
+                contact={modalContact}
+                onStartConversation={handleStartConversationFromModal}
+            />
+
+            <NewEmailModal
+                open={isNewEmailModalOpen}
+                onClose={() => setIsNewEmailModalOpen(false)}
+                contacts={oppLinkedContacts}
+                fromEmail={currentUserEmail}
+                saving={savingEmail}
+                onSend={handleSendEmail}
+            />
+
+            {/* Note / interaction modal (channel pre-loaded from active view) */}
+            <AddNoteModal
+                open={isAddNoteOpen}
+                onClose={() => setIsAddNoteOpen(false)}
+                activeChannel={activeChannel}
+                interactionTypes={interactionTypes}
+                targetName={selectedContact.displayName}
+                saving={savingNote}
+                onSave={handleSaveNote}
+            />
+
+            <Toast notification={notification} onDismiss={() => setNotification(null)} />
+        </AppLayout>
     );
 }
 

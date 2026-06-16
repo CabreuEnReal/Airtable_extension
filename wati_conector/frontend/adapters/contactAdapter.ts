@@ -1,4 +1,4 @@
-import type { Contact, Lead, Interaction } from '../types/models';
+import type { Contact, Lead, Interaction, ActiveChannel } from '../types/models';
 import type { AirtableRecord } from '../types/airtable';
 import type { ApiContactOut } from '../types/api';
 import { LEAD_FIELDS, CONTACT_FIELDS, OPPORTUNITY_FIELDS, INTERACTION_FIELDS } from '../types/airtable';
@@ -136,6 +136,43 @@ export function adaptOpportunityToContact(raw: AirtableRecord): Contact {
     };
 }
 
+// ─── Resolve the contacts that belong to a single opportunity ───────────────
+// Source of truth: the opportunity's linked-record fields (Contacts / Sponsors /
+// Power Sponsors). Each holds Airtable record IDs of the Contacts table, which
+// match Contact.id. Falls back to same-account contacts only when NO explicit
+// link exists, so we never leak the whole list into every deal.
+
+export function resolveOpportunityContacts(
+    opp: Contact | null,
+    allContacts: Contact[],
+): Contact[] {
+    if (!opp) return [];
+
+    const linkedIds = new Set<string>([
+        ...(opp.linkedContactIds ?? []),
+        ...(opp.sponsorIds ?? []),
+        ...(opp.powerSponsorIds ?? []),
+    ]);
+
+    const contactsOnly = allContacts.filter((c) => c.contactType === 'contact');
+
+    const byLink = contactsOnly.filter((c) => linkedIds.has(c.id));
+    if (byLink.length > 0) {
+        console.log(`[OppContacts] ${opp.displayName} → ${byLink.length} via links`, [...linkedIds]);
+        return byLink;
+    }
+
+    // Fallback: match by account/company name when the deal has no linked records.
+    const company = (opp.company ?? '').trim().toLowerCase();
+    const byCompany = company
+        ? contactsOnly.filter((c) => (c.company ?? '').trim().toLowerCase() === company)
+        : [];
+    console.log(
+        `[OppContacts] ${opp.displayName} → no links (${linkedIds.size} ids), fallback by company "${company}" → ${byCompany.length}`,
+    );
+    return byCompany;
+}
+
 // ─── Lead Record → Lead Model ───────────────────────────────────────────────
 
 export function adaptLead(raw: AirtableRecord): Lead {
@@ -164,17 +201,29 @@ export function adaptLead(raw: AirtableRecord): Lead {
 
 // ─── Interaction Record → Interaction Model ─────────────────────────────────
 
+/** Infer channel from TYPE tags or NAME prefix. */
+export function deriveChannel(type: string[], name: string): ActiveChannel | undefined {
+    const hay = [...type, name].join(' ').toLowerCase();
+    if (hay.includes('whatsapp') || hay.includes('whats') || hay.includes(' wa ')) return 'whatsapp';
+    if (hay.includes('correo') || hay.includes('email') || hay.includes('mail')) return 'correo';
+    return undefined;
+}
+
 export function adaptInteraction(raw: AirtableRecord): Interaction {
     const f = raw.fields;
+    const type = parseMultiSelect(f[INTERACTION_FIELDS.TYPE]);
+    const name = f[INTERACTION_FIELDS.NAME] ?? '';
     return {
         id: raw.id,
-        name: f[INTERACTION_FIELDS.NAME] ?? '',
-        type: parseMultiSelect(f[INTERACTION_FIELDS.TYPE]),
+        name,
+        type,
         dateExecuted: f[INTERACTION_FIELDS.DATE_EXECUTED] ?? '',
         notes: f[INTERACTION_FIELDS.NOTES] ?? '',
         team: parseMultiSelect(f[INTERACTION_FIELDS.TEAM]),
         accountId: parseLinkedRecord(f[INTERACTION_FIELDS.ACCOUNT]),
-        contactId: parseLinkedRecord(f[INTERACTION_FIELDS.CONTACT]),
+        contactId: parseLinkedRecord(f[INTERACTION_FIELDS.CONTACTS]),
+        opportunityId: parseLinkedRecord(f[INTERACTION_FIELDS.OPPORTUNITY]),
+        channel: deriveChannel(type, name),
     };
 }
 

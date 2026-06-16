@@ -7,6 +7,9 @@ export const TABLES = {
     ACCOUNTS: 'Accounts',
     INTERACTIONS: 'Interaction History',
     INTERACTION_TYPES: 'Interaction Types',
+    // Channel/type catalog linked from Interaction History via "Type LR".
+    // Placeholder name — adjust if the real table differs.
+    INTERACTION_TYPE_CHANNELS: 'Tipos de Interaccion',
     PEOPLE: 'People',
 } as const;
 
@@ -127,13 +130,17 @@ export const ACCOUNT_FIELDS = {
 // ─── Interaction field constants ────────────────────────────────────────────
 
 export const INTERACTION_FIELDS = {
-    NAME: 'Name',
-    TYPE: 'Type',
+    NAME: 'Name',          // COMPUTED (formula/autonumber) — read-only, never write
+    TYPE: 'Type',          // COMPUTED lookup — read-only (badge derivation only)
+    TYPE_LR: 'Type LR',    // linked record → channel/type catalog (WRITE here)
     DATE_EXECUTED: 'Date Executed',
-    NOTES: 'Notes',
+    NOTES: 'Notes',        // manual note text
+    AI_NOTES: 'AI Notes',  // reserved for Galea AI
     TEAM: 'Team',
     ACCOUNT: 'Account',
-    CONTACT: 'Contact',
+    CONTACTS: 'Contacts',          // linked → Contacts
+    OPPORTUNITY: 'Opportunity',    // linked → Opportunities
+    PARTICIPANTS: 'Team Participants',  // collaborator field — send [{email}]
 } as const;
 
 // ─── Raw Airtable record shape (from REST API) ─────────────────────────────

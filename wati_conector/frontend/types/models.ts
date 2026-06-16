@@ -1,5 +1,9 @@
 // ─── UI Models (decoupled from Airtable field names) ───────────────────────
 
+// CRM-first navigation
+export type ViewState = 'search' | 'opp-detail-a' | 'opp-detail-b';
+export type ActiveChannel = 'whatsapp' | 'correo';
+
 export type MessageDirection = 'inbound' | 'outbound';
 
 export type MessageStatus =
@@ -97,6 +101,17 @@ export interface Interaction {
     team: string[];
     accountId: string;
     contactId: string;
+    opportunityId: string;
+    /** Derived channel (from TYPE / NAME) — drives the UI badge. */
+    channel?: ActiveChannel;
+    /** Optimistic flag while the Airtable write is in flight. */
+    isOptimistic?: boolean;
+}
+
+/** Channel/type catalog row (linked from Interaction History via "Type LR"). */
+export interface InteractionType {
+    id: string;   // recXXXX
+    name: string; // "WhatsApp", "Correo", ...
 }
 
 export interface Message {
