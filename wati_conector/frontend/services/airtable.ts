@@ -265,6 +265,29 @@ export async function getInteractionTypes(): Promise<InteractionType[]> {
         .filter((t) => t.name);
 }
 
+// ─── Generic single-record fetch ────────────────────────────────────────────
+
+async function getRecord(tableName: string, recordId: string): Promise<AirtableRecord> {
+    const url = `${AIRTABLE_CONFIG.API_URL}/${baseId}/${encodeURIComponent(tableName)}/${recordId}`;
+    const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${AIRTABLE_CONFIG.TOKEN}` },
+    });
+    if (!res.ok) throw new Error(`Airtable GET ${tableName}/${recordId} ${res.status}`);
+    return res.json();
+}
+
+/**
+ * Return the raw cellphone string from a People record.
+ * Tries `Cellphone` first; falls back to `Cellphone (formatted)`.
+ * Returns empty string if neither field is present.
+ */
+export async function getPeopleCellphone(peopleId: string): Promise<string> {
+    const rec = await getRecord(TABLES.PEOPLE, peopleId);
+    return String(
+        rec.fields[PEOPLE_FIELDS.CELLPHONE] ?? rec.fields[PEOPLE_FIELDS.CELLPHONE_FORMATTED] ?? ''
+    ).trim();
+}
+
 // ─── Generic create (POST a single record) ──────────────────────────────────
 
 async function createRecord(tableName: string, fields: Record<string, unknown>): Promise<AirtableRecord> {

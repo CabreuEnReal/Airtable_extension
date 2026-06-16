@@ -10,7 +10,7 @@ import type { Contact, Message, Template, Interaction, InteractionType, Notifica
 import type { WhatsAppNumber, NumberStats, InboxStatus, MessageWithNumber } from './types/whatsapp';
 import type { ApiConversationResponse } from './types/api';
 import { POLLING } from './constants/config';
-import { detectBaseId, getAllContacts, getInteractions, getInteractionTypes, createInteraction, resolvePeopleIdByEmail } from './services/airtable';
+import { detectBaseId, getAllContacts, getInteractions, getInteractionTypes, createInteraction, resolvePeopleIdByEmail, getPeopleCellphone } from './services/airtable';
 import { resolveOpportunityContacts, deriveChannel } from './adapters/contactAdapter';
 import { OpportunitySearchView } from './components/opportunities/OpportunitySearchView';
 import { OpportunityDetailViewA } from './components/opportunities/OpportunityDetailViewA';
@@ -146,6 +146,10 @@ function SalesCRM() {
     // ─── Owner identity: resolve People record id from login email ──
     const [myPeopleId, setMyPeopleId] = useState<string | null>(null);
     const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
+
+    // ─── WhatsApp number linking (Blocker A) ─────────────────────────────────
+    const [isWhatsAppLinked, setIsWhatsAppLinked] = useState(false);
+    const [assignedWhatsAppNumber, setAssignedWhatsAppNumber] = useState<WhatsAppNumber | null>(null);
 
     // ─── State ──────────────────────────────────────────────
     const [contacts, setContacts] = useState<Contact[]>([]);
@@ -877,6 +881,49 @@ function SalesCRM() {
         return () => { cancelled = true; };
     }, [currentUserEmail, addLog]);
 
+    // ─── WhatsApp number match (Blocker A) ───────────────────────────────────
+    // Strip all non-digits for comparison — handles +52, spaces, dashes, parens.
+    // Uses endsWith so "5651208675" matches "525651208675" (MX country code prefix).
+    useEffect(() => {
+        if (!myPeopleId || availableNumbers.length === 0) return;
+        let cancelled = false;
+
+        const cleanPhone = (phone: string) => phone.replace(/\D/g, '');
+
+        getPeopleCellphone(myPeopleId)
+            .then((rawPhone) => {
+                if (cancelled) return;
+                const myDigits = cleanPhone(rawPhone);
+                if (!myDigits) {
+                    addLog('⚠ WhatsApp link: no cellphone in People record');
+                    setIsWhatsAppLinked(false);
+                    setAssignedWhatsAppNumber(null);
+                    return;
+                }
+                const matched = availableNumbers.find((n) => {
+                    const nDigits = cleanPhone(n.phone_number);
+                    return nDigits.endsWith(myDigits) || myDigits.endsWith(nDigits);
+                });
+                setIsWhatsAppLinked(!!matched);
+                setAssignedWhatsAppNumber(matched ?? null);
+                if (matched) {
+                    // Override auto-selection: pin to the user's own number
+                    setSelectedPhoneNumber(matched.id);
+                    addLog(`✅ WhatsApp linked: ${matched.phone_number} (id=${matched.id})`);
+                } else {
+                    addLog(`⚠ WhatsApp link: no number matched for "${rawPhone}"`);
+                }
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                addLog(`⚠ WhatsApp link error: ${(err as Error).message}`);
+                setIsWhatsAppLinked(false);
+                setAssignedWhatsAppNumber(null);
+            });
+
+        return () => { cancelled = true; };
+    }, [myPeopleId, availableNumbers, addLog]);
+
     // ─── My opportunities (Owner-scoped pipeline, Blocker B) ──
     const myOpportunities = useMemo(
         () =>
@@ -1590,6 +1637,7 @@ function SalesCRM() {
                 onAddInteraction={() => setIsAddNoteOpen(true)}
                 onAddNote={() => setIsAddNoteOpen(true)}
                 interactions={oppInteractions}
+                isWhatsAppLinked={isWhatsAppLinked}
                 messages={chatMessagesToDisplay}
                 templates={templates}
                 onSend={handleSend}

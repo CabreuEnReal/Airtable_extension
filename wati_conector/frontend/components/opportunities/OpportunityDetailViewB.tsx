@@ -44,6 +44,8 @@ interface OpportunityDetailViewBProps {
     conversationResponse?: ApiConversationResponse | null;
     summaryLoading?: boolean;
     summaryError?: string | null;
+    /** True when the logged-in user's cellphone matches a registered Meta number. */
+    isWhatsAppLinked?: boolean;
 }
 
 function ColumnTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
@@ -86,6 +88,7 @@ export function OpportunityDetailViewB({
     conversationResponse,
     summaryLoading,
     summaryError,
+    isWhatsAppLinked = false,
 }: OpportunityDetailViewBProps) {
     const galeaText = opp.companyDescription || opp.linkedInSummary || '';
 
@@ -209,27 +212,37 @@ export function OpportunityDetailViewB({
             {/* ── CENTER: conversation ── */}
             <main className="flex-1 flex flex-col overflow-hidden">
                 {activeChannel === 'whatsapp' ? (
-                    <ChatPanel
-                        contact={contact}
-                        messages={messages}
-                        templates={templates}
-                        onSend={onSend ?? (() => {})}
-                        onSendMedia={onSendMedia}
-                        onSendMetaTemplate={onSendMetaTemplate}
-                        onSelectAirtableTemplate={onSelectAirtableTemplate}
-                        onRetryMedia={onRetryMedia}
-                        sending={sending}
-                        onOpenDetail={() => onViewContact?.(contact.id)}
-                        onOpenNotes={onAddNote}
-                        pendingDraft={pendingDraft}
-                        onPendingDraftConsumed={onPendingDraftConsumed}
-                        onReopenConversation={onReopenConversation}
-                        conversationActive={conversationActive}
-                        windowStatusLoading={windowStatusLoading}
-                        conversationResponse={conversationResponse}
-                        summaryLoading={summaryLoading}
-                        summaryError={summaryError}
-                    />
+                    isWhatsAppLinked ? (
+                        <ChatPanel
+                            contact={contact}
+                            messages={messages}
+                            templates={templates}
+                            onSend={onSend ?? (() => {})}
+                            onSendMedia={onSendMedia}
+                            onSendMetaTemplate={onSendMetaTemplate}
+                            onSelectAirtableTemplate={onSelectAirtableTemplate}
+                            onRetryMedia={onRetryMedia}
+                            sending={sending}
+                            onOpenDetail={() => onViewContact?.(contact.id)}
+                            onOpenNotes={onAddNote}
+                            pendingDraft={pendingDraft}
+                            onPendingDraftConsumed={onPendingDraftConsumed}
+                            onReopenConversation={onReopenConversation}
+                            conversationActive={conversationActive}
+                            windowStatusLoading={windowStatusLoading}
+                            conversationResponse={conversationResponse}
+                            summaryLoading={summaryLoading}
+                            summaryError={summaryError}
+                        />
+                    ) : (
+                        <div className="flex-1 flex items-center justify-center bg-[#e8ede8]">
+                            <EmptyState
+                                icon="🔒"
+                                title="Canal no vinculado"
+                                description="Debes realizar la vinculación de tu número con Meta para poder visualizar y enviar mensajes de WhatsApp."
+                            />
+                        </div>
+                    )
                 ) : (
                     <EmailPanel contactEmail={contact.email} />
                 )}

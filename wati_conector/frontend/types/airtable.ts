@@ -113,6 +113,8 @@ export const OPPORTUNITY_FIELDS = {
 export const PEOPLE_FIELDS = {
     FULL_NAME: 'Full Name',
     EMAIL: 'Email',
+    CELLPHONE: 'Cellphone',
+    CELLPHONE_FORMATTED: 'Cellphone (formatted)',
 } as const;
 
 // ─── Account field constants ────────────────────────────────────────────────
