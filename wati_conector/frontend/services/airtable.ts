@@ -314,8 +314,10 @@ async function createRecord(tableName: string, fields: Record<string, unknown>):
 export interface NewInteractionInput {
     /** Manual note text → Notes. */
     notes: string;
-    /** Interaction-type/channel catalog record id (recXXXX) → "Type LR" link. */
-    typeId: string;
+    /** Single type record id — use typeIds for multiple. */
+    typeId?: string;
+    /** Multiple type record ids (takes precedence over typeId). */
+    typeIds?: string[];
     /** Opportunities record id (recXXXX) → Opportunity link. */
     opportunityId?: string;
     /** Contacts record id (recXXXX) → Contacts link. */
@@ -332,10 +334,19 @@ export interface NewInteractionInput {
  *  - NEVER writes "Name" (computed formula/autonumber).
  *  - NEVER writes "Type" (computed lookup). Channel goes to "Type LR" (linked record).
  */
+/** Create a new Interaction Type record and return its record id. */
+export async function createInteractionType(name: string): Promise<string> {
+    const rec = await createRecord('tblseDeqVk1hMo6TW', { Name: name });
+    return rec.id;
+}
+
 export async function createInteraction(input: NewInteractionInput): Promise<Interaction> {
+    const resolvedTypeIds = input.typeIds && input.typeIds.length > 0
+        ? input.typeIds
+        : input.typeId ? [input.typeId] : [];
     const fields: Record<string, unknown> = {
         [INTERACTION_FIELDS.NOTES]: input.notes,
-        [INTERACTION_FIELDS.TYPE_LR]: [input.typeId],
+        [INTERACTION_FIELDS.TYPE_LR]: resolvedTypeIds,
         // ISO 8601 UTC — Airtable displays in the field's configured timezone (America/Mexico_City)
         [INTERACTION_FIELDS.DATE_EXECUTED]: new Date().toISOString(),
     };

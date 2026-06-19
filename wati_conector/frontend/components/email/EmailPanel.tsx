@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from '@airtable/blocks/interface/ui';
-import type { Conversation, ConversationMessage, EmailAttachment, Notification } from '../../types/models';
+import type { Conversation, ConversationMessage, EmailAttachment, Notification, Interaction } from '../../types/models';
+import { createInteraction, createInteractionType } from '../../services/airtable';
 import { Avatar } from '../common/Avatar';
 import { EmptyState } from '../common/EmptyState';
 import { Spinner } from '../common/Spinner';
@@ -10,6 +11,8 @@ interface EmailPanelProps {
     contactEmail?: string;
     contactId?: string;
     contactName?: string;
+    opportunityId?: string;
+    onInteractionCreated?: (it: Interaction) => void;
 }
 
 const N8N_BASE = 'https://n8n.energiareal.mx';
@@ -549,9 +552,10 @@ function ThreadView({
 
 // ─── Main EmailPanel ──────────────────────────────────────────────────────────
 
-export function EmailPanel({ contactEmail, contactId, contactName }: EmailPanelProps) {
+export function EmailPanel({ contactEmail, contactId, contactName, opportunityId }: EmailPanelProps) {
     const session = useSession();
     const airtableUserId = (session as any)?.currentUser?.id;
+    const userEmail = (session as any)?.currentUser?.email ?? '';
     const popupRef = useRef<Window | null>(null);
 
     // null = checking auth, false = disconnected, true = connected
@@ -824,8 +828,10 @@ export function EmailPanel({ contactEmail, contactId, contactName }: EmailPanelP
                 body: JSON.stringify({
                     channel: 'email',
                     airtableUserId,
+                    userEmail,
                     contactId,
                     contactName: contactName || contactEmail || 'Contacto',
+                    opportunityId: opportunityId || '',
                     messages,
                     subject: selectedConversation.subject,
                 }),
@@ -833,16 +839,32 @@ export function EmailPanel({ contactEmail, contactId, contactName }: EmailPanelP
 
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
+            if (!data.success) throw new Error(data.error || 'Error en el análisis');
 
-            if (data.success) {
-                setNotification({
-                    id: Date.now().toString(),
-                    type: 'success',
-                    text: `Galea analizó el hilo: ${(data.types as string[] | undefined)?.join(', ') || 'categorizado'}`,
-                });
-            } else {
-                throw new Error(data.error || 'Error en el análisis');
+            // Crear tipos desconocidos en Airtable si los hay
+            const allTypeIds: string[] = [...(data.typeIds || [])];
+            for (const typeName of (data.unknownTypes || [])) {
+                try {
+                    const newId = await createInteractionType(typeName);
+                    allTypeIds.push(newId);
+                } catch (_) { /* continuar sin el tipo */ }
             }
+
+            // Guardar en Interaction History usando el SDK
+            await createInteraction({
+                notes: '',
+                typeIds: allTypeIds,
+                aiNotes: data.aiNotes,
+                contactId,
+                opportunityId,
+                participantEmail: userEmail,
+            });
+
+            setNotification({
+                id: Date.now().toString(),
+                type: 'success',
+                text: `Galea: ${(data.types as string[] | undefined)?.join(', ') || 'categorizado'}`,
+            });
         } catch (err: any) {
             setNotification({
                 id: Date.now().toString(),

@@ -224,6 +224,7 @@ export function adaptInteraction(raw: AirtableRecord): Interaction {
         contactId: parseLinkedRecord(f[INTERACTION_FIELDS.CONTACTS]),
         opportunityId: parseLinkedRecord(f[INTERACTION_FIELDS.OPPORTUNITY]),
         channel: deriveChannel(type, name),
+        aiNotes: typeof f[INTERACTION_FIELDS.AI_NOTES] === 'string' ? f[INTERACTION_FIELDS.AI_NOTES] : undefined,
     };
 }
 

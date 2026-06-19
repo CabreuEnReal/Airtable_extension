@@ -109,6 +109,8 @@ export interface Interaction {
     channel?: ActiveChannel;
     /** Optimistic flag while the Airtable write is in flight. */
     isOptimistic?: boolean;
+    /** Galea AI analysis text (multi-line, from "AI Notes" field). */
+    aiNotes?: string;
 }
 
 /** Channel/type catalog row (linked from Interaction History via "Type LR"). */

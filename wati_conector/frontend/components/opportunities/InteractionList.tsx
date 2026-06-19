@@ -30,30 +30,86 @@ function formatDate(iso: string): string {
     return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function InteractionCard({ it }: { it: Interaction }) {
-    const [open, setOpen] = useState(false);
+export function InteractionDetailModal({ it, onClose }: { it: Interaction; onClose: () => void }) {
     return (
-        <div className={`px-3.5 py-2.5 border-b border-gray-75 last:border-b-0 ${it.isOptimistic ? 'opacity-60' : ''}`}>
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            onClick={onClose}
+        >
+            <div
+                className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                    <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+                        <ChannelBadge channel={it.channel} />
+                        {it.type.map((t) => (
+                            <span key={t} className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-100 text-violet-700">
+                                {t}
+                            </span>
+                        ))}
+                        <span className="text-xs text-gray-400">{formatDate(it.dateExecuted)}</span>
+                    </div>
+                    <button
+                        onClick={onClose}
+                        className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 text-xl leading-none ml-2"
+                    >
+                        ×
+                    </button>
+                </div>
+                {/* Body */}
+                <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+                    {it.aiNotes && (
+                        <div>
+                            <div className="flex items-center gap-1.5 mb-2">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2">
+                                    <path d="M12 2l2.09 6.26L20.18 9l-5.09 3.74L17.18 19 12 15.27 6.82 19l2.09-6.26L3.82 9l6.09-.74L12 2z" />
+                                </svg>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500">Análisis de Galea</span>
+                            </div>
+                            <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{it.aiNotes}</p>
+                        </div>
+                    )}
+                    {it.notes && (
+                        <div>
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Nota</div>
+                            <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{it.notes}</p>
+                        </div>
+                    )}
+                    {!it.aiNotes && !it.notes && (
+                        <p className="text-sm text-gray-400 text-center py-6">Sin contenido disponible.</p>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function InteractionCard({ it, onOpen }: { it: Interaction; onOpen: () => void }) {
+    const preview = it.aiNotes
+        ? it.aiNotes.split('\n').filter((l) => l.trim()).slice(1).join(' ') || it.aiNotes
+        : it.notes || it.name || '—';
+
+    return (
+        <button
+            onClick={onOpen}
+            className={`w-full text-left px-3.5 py-2.5 border-b border-gray-75 last:border-b-0 hover:bg-green-light3/40 transition-colors ${it.isOptimistic ? 'opacity-60' : ''}`}
+        >
             <div className="flex items-center gap-2 mb-1">
                 <ChannelBadge channel={it.channel} />
+                {it.aiNotes && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-50 text-amber-500">
+                        Galea
+                    </span>
+                )}
                 <span className="text-[11px] text-gray-400">{formatDate(it.dateExecuted)}</span>
-                <button
-                    onClick={() => setOpen((o) => !o)}
-                    title={open ? 'Contraer' : 'Expandir'}
-                    className="ml-auto w-5 h-5 flex items-center justify-center rounded text-gray-300 hover:text-primary hover:bg-green-light3"
-                >
-                    <svg
-                        className={`transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-                        width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                    >
-                        <polyline points="6 9 12 15 18 9" />
-                    </svg>
-                </button>
+                <svg className="ml-auto opacity-30" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <polyline points="9 18 15 12 9 6" />
+                </svg>
             </div>
-            <p className={`text-body text-gray-700 leading-relaxed ${open ? '' : 'line-clamp-2'}`}>
-                {it.notes || it.name || '—'}
-            </p>
-        </div>
+            <p className="text-body text-gray-700 leading-relaxed line-clamp-2">{preview}</p>
+        </button>
     );
 }
 
@@ -64,7 +120,8 @@ export function InteractionList({
     emptyTitle = 'Sin interacciones',
     emptyDescription,
 }: InteractionListProps) {
-    // Newest first. Optimistic entries (no real date yet) bubble to the top.
+    const [selected, setSelected] = useState<Interaction | null>(null);
+
     const sorted = useMemo(() => {
         return [...items].sort((a, b) => {
             if (a.isOptimistic && !b.isOptimistic) return -1;
@@ -78,10 +135,13 @@ export function InteractionList({
     }
 
     return (
-        <div className={`${maxHeightClass} overflow-y-auto`}>
-            {sorted.map((it) => (
-                <InteractionCard key={it.id} it={it} />
-            ))}
-        </div>
+        <>
+            <div className={`${maxHeightClass} overflow-y-auto`}>
+                {sorted.map((it) => (
+                    <InteractionCard key={it.id} it={it} onOpen={() => setSelected(it)} />
+                ))}
+            </div>
+            {selected && <InteractionDetailModal it={selected} onClose={() => setSelected(null)} />}
+        </>
     );
 }

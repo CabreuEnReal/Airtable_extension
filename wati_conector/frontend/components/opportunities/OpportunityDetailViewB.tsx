@@ -1,9 +1,9 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { Contact, ActiveChannel, Interaction, Message, Template } from '../../types/models';
 import type { ApiConversationResponse } from '../../types/api';
 import { Avatar } from '../common/Avatar';
 import { EmptyState } from '../common/EmptyState';
-import { InteractionList } from './InteractionList';
+import { InteractionList, InteractionDetailModal } from './InteractionList';
 import { ChatPanel } from '../chat/ChatPanel';
 import { EmailPanel } from '../email/EmailPanel';
 
@@ -104,7 +104,15 @@ export function OpportunityDetailViewB({
         summaryLoading,
         summaryError,
     });
+    const [galeaModalInteraction, setGaleaModalInteraction] = useState<Interaction | null>(null);
     const galeaText = opp.companyDescription || opp.linkedInSummary || '';
+    // Filter to the active contact only — each contact has independent notes/history.
+    const contactInteractions = interactions.filter(
+        (it) => it.isOptimistic || it.contactId === contact.id,
+    );
+    const latestGaleaInteraction = [...contactInteractions]
+        .sort((a, b) => (b.dateExecuted || '').localeCompare(a.dateExecuted || ''))
+        .find((it) => it.aiNotes);
 
     return (
         <div className="flex flex-1 overflow-hidden">
@@ -137,10 +145,32 @@ export function OpportunityDetailViewB({
                         </svg>
                         <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Resumen de GALEA</span>
                     </div>
-                    <p className="text-xs text-gray-500 leading-relaxed line-clamp-3">
-                        {galeaText || 'Sin resumen generado aún.'}
-                    </p>
+                    {latestGaleaInteraction ? (
+                        <button
+                            onClick={() => setGaleaModalInteraction(latestGaleaInteraction)}
+                            className="w-full text-left group"
+                        >
+                            <p className="text-xs text-gray-600 leading-relaxed line-clamp-3 group-hover:text-gray-900 transition-colors">
+                                {latestGaleaInteraction.aiNotes
+                                    ?.split('\n')
+                                    .filter((l) => l.trim())
+                                    .slice(1)
+                                    .join(' ') || latestGaleaInteraction.aiNotes}
+                            </p>
+                            <span className="text-[10px] text-primary font-semibold mt-0.5 inline-block">Ver análisis →</span>
+                        </button>
+                    ) : (
+                        <p className="text-xs text-gray-500 leading-relaxed line-clamp-3">
+                            {galeaText || 'Sin resumen generado aún.'}
+                        </p>
+                    )}
                 </div>
+                {galeaModalInteraction && (
+                    <InteractionDetailModal
+                        it={galeaModalInteraction}
+                        onClose={() => setGaleaModalInteraction(null)}
+                    />
+                )}
 
                 {/* Channel pills */}
                 <div className="flex gap-1.5 px-3.5 py-2.5 border-b border-gray-100 flex-shrink-0">
@@ -209,7 +239,7 @@ export function OpportunityDetailViewB({
                 {/* History */}
                 <ColumnTitle>Historial</ColumnTitle>
                 <InteractionList
-                    items={interactions}
+                    items={contactInteractions}
                     maxHeightClass="max-h-[200px]"
                     emptyIcon="🕓"
                     emptyTitle="Sin interacciones"
@@ -259,7 +289,7 @@ export function OpportunityDetailViewB({
                         </div>
                     )
                 ) : (
-                    <EmailPanel contactEmail={contact.email} contactId={contact.id} contactName={contact.displayName} />
+                    <EmailPanel contactEmail={contact.email} contactId={contact.id} contactName={contact.displayName} opportunityId={opp.id} />
                 )}
             </main>
 
@@ -289,7 +319,7 @@ export function OpportunityDetailViewB({
                 {/* Notes */}
                 <ColumnTitle>Notas</ColumnTitle>
                 <InteractionList
-                    items={interactions}
+                    items={contactInteractions}
                     maxHeightClass="flex-1"
                     emptyIcon="📝"
                     emptyTitle="Sin notas aún"

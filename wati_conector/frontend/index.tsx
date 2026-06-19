@@ -10,7 +10,7 @@ import type { Contact, Message, Template, Interaction, InteractionType, Notifica
 import type { WhatsAppNumber, NumberStats, InboxStatus, MessageWithNumber } from './types/whatsapp';
 import type { ApiConversationResponse, ApiMessageOut } from './types/api';
 import { POLLING } from './constants/config';
-import { detectBaseId, getAllContacts, getInteractions, getInteractionTypes, createInteraction, resolvePeopleIdByEmail, getPeopleCellphone } from './services/airtable';
+import { detectBaseId, getAllContacts, getInteractions, getInteractionTypes, createInteraction, createInteractionType, resolvePeopleIdByEmail, getPeopleCellphone } from './services/airtable';
 import { resolveOpportunityContacts, deriveChannel } from './adapters/contactAdapter';
 import { OpportunitySearchView } from './components/opportunities/OpportunitySearchView';
 import { OpportunityDetailViewA } from './components/opportunities/OpportunityDetailViewA';
@@ -1554,22 +1554,41 @@ function SalesCRM() {
                 body: JSON.stringify({
                     channel: 'whatsapp',
                     airtableUserId: userId,
+                    userEmail: currentUserEmail,
                     contactId: selectedContact.id,
                     contactName: selectedContact.displayName,
+                    opportunityId: selectedOpportunity?.id || '',
                     messages,
                 }),
             });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            if (data.success) {
-                notify('success', `Galea analizó la conversación: ${(data.types as string[] | undefined)?.join(', ') || 'categorizado'}`);
-            } else {
-                throw new Error(data.error || 'Error en el análisis');
+            if (!data.success) throw new Error(data.error || 'Error en el análisis');
+
+            // Crear tipos desconocidos en Airtable si los hay
+            const allTypeIds: string[] = [...(data.typeIds || [])];
+            for (const typeName of (data.unknownTypes || [])) {
+                try {
+                    const newId = await createInteractionType(typeName);
+                    allTypeIds.push(newId);
+                } catch (_) { /* continuar sin el tipo */ }
             }
+
+            // Guardar en Interaction History usando el SDK (igual que notas manuales)
+            await createInteraction({
+                notes: '',
+                typeIds: allTypeIds,
+                aiNotes: data.aiNotes,
+                contactId: selectedContact.id,
+                opportunityId: selectedOpportunity?.id,
+                participantEmail: currentUserEmail,
+            });
+
+            notify('success', `Galea: ${(data.types as string[])?.join(', ') || 'categorizado'}`);
         } catch (err: any) {
             notify('error', `Error en Galea: ${err.message}`);
         }
-    }, [selectedContact, session, chatMessagesToDisplay, notify]);
+    }, [selectedContact, session, currentUserEmail, selectedOpportunity, chatMessagesToDisplay, notify]);
 
     // ─── Select Airtable Template (render client-side with contact data) ──────
     const handleSelectAirtableTemplate = useCallback((template: Template) => {
