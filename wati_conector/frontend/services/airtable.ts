@@ -283,9 +283,12 @@ async function getRecord(tableName: string, recordId: string): Promise<AirtableR
  */
 export async function getPeopleCellphone(peopleId: string): Promise<string> {
     const rec = await getRecord(TABLES.PEOPLE, peopleId);
-    return String(
-        rec.fields[PEOPLE_FIELDS.CELLPHONE] ?? rec.fields[PEOPLE_FIELDS.CELLPHONE_FORMATTED] ?? ''
-    ).trim();
+    const rawCellphone = rec.fields[PEOPLE_FIELDS.CELLPHONE];
+    const rawFormatted = rec.fields[PEOPLE_FIELDS.CELLPHONE_FORMATTED];
+    console.log(`[WA Match] People ${peopleId} → Cellphone: ${JSON.stringify(rawCellphone)}, Cellphone (formatted): ${JSON.stringify(rawFormatted)}`);
+    const result = String(rawCellphone ?? rawFormatted ?? '').trim();
+    console.log(`[WA Match] Returning phone: "${result}"`);
+    return result;
 }
 
 // ─── Generic create (POST a single record) ──────────────────────────────────

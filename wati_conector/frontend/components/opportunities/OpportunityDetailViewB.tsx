@@ -90,6 +90,18 @@ export function OpportunityDetailViewB({
     summaryError,
     isWhatsAppLinked = false,
 }: OpportunityDetailViewBProps) {
+    console.log('[VIEW B RENDER]', {
+        contactId: contact?.id,
+        contactName: contact?.displayName,
+        isWhatsAppLinked,
+        activeChannel,
+        messagesCount: messages?.length,
+        conversationActive,
+        windowStatusLoading,
+        conversationResponseStatus: conversationResponse?.status ?? null,
+        summaryLoading,
+        summaryError,
+    });
     const galeaText = opp.companyDescription || opp.linkedInSummary || '';
 
     return (

@@ -37,7 +37,7 @@ export const POLLING = {
     INBOX_STATUS: 7_000,     // Inbox status/stats: 7s for unread badges
     CONTACTS: 30_000,        // Contacts list: 30s
     NUMBERS: 30_000,         // WhatsApp numbers: 30s (fast DB read)
-    API_HEALTH: 15_000,      // API health check: 15s for near-realtime status
+    API_HEALTH: 60_000,      // API health check: 60s (reduced noise)
 } as const;
 
 // ─── UI Constants ───────────────────────────────────────────────────────────

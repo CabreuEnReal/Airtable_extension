@@ -8,7 +8,7 @@ import type { ViewState, ActiveChannel } from './types/models';
 // ─── Services & types ───────────────────────────────────────
 import type { Contact, Message, Template, Interaction, InteractionType, Notification as AppNotification } from './types/models';
 import type { WhatsAppNumber, NumberStats, InboxStatus, MessageWithNumber } from './types/whatsapp';
-import type { ApiConversationResponse } from './types/api';
+import type { ApiConversationResponse, ApiMessageOut } from './types/api';
 import { POLLING } from './constants/config';
 import { detectBaseId, getAllContacts, getInteractions, getInteractionTypes, createInteraction, resolvePeopleIdByEmail, getPeopleCellphone } from './services/airtable';
 import { resolveOpportunityContacts, deriveChannel } from './adapters/contactAdapter';
@@ -110,6 +110,38 @@ function phoneVariants(raw: string): string[] {
     return [...variants];
 }
 
+/**
+ * Merge freshly-fetched decrypted server messages with locally-held messages
+ * (optimistic sends + recently-confirmed sends the server poll hasn't surfaced yet).
+ *
+ * - server: decrypted ApiMessageOut[] adapted, already stamped contactId = activeContactId
+ * - prev:   current selectedChatMessages (may hold optimistic temp_ + confirmed sends)
+ * - activeContactId: the Airtable contact whose chat is open
+ *
+ * Survivors from prev (things server doesn't have yet):
+ *   • must belong to the active contact (drops stale carryover after a contact switch)
+ *   • optimistic temp messages (still sending) — always kept
+ *   • confirmed OUTBOUND sends not yet echoed by the server — kept (no age cap) so a
+ *     successful send never blinks out, even if the backend is slow to surface the row.
+ * A survivor is dropped the instant the server returns it (matched by id or metaMessageId).
+ */
+function mergeDecryptedWithOptimistic(
+    server: Message[],
+    prev: Message[],
+    activeContactId: string | null,
+): Message[] {
+    const serverIds = new Set(server.map((m) => m.id));
+    const serverMetaIds = new Set(server.map((m) => m.metaMessageId).filter(Boolean));
+    const survivingLocal = prev.filter((m) => {
+        if (serverIds.has(m.id)) return false;
+        if (m.metaMessageId && serverMetaIds.has(m.metaMessageId)) return false;
+        if (m.contactId !== activeContactId) return false;
+        if (m.isOptimistic) return true;
+        return m.direction === 'outbound';
+    });
+    return [...server, ...survivingLocal];
+}
+
 // ─── Main App ──────────────────────────────────────────────
 
 function SalesCRM() {
@@ -125,7 +157,11 @@ function SalesCRM() {
     const currentUserEmail = (session as any)?.currentUser?.email ?? '';
 
     // ─── CRM-First navigation state ─────────────────────────
-    const [currentView, setCurrentView] = useState<ViewState>('search');
+    const [currentView, _setCurrentView] = useState<ViewState>('search');
+    const setCurrentView = (val: ViewState) => {
+        console.trace(`[TRACE] setCurrentView → ${val}`);
+        _setCurrentView(val);
+    };
     const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(null);
     const [activeChannel, setActiveChannel] = useState<ActiveChannel>('whatsapp');
 
@@ -154,8 +190,13 @@ function SalesCRM() {
     // ─── State ──────────────────────────────────────────────
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [messages, setMessages] = useState<Message[]>([]);
+    const [selectedContactDbId, setSelectedContactDbId] = useState<number | undefined>(undefined);
     const [templates, setTemplates] = useState<Template[]>([]);
-    const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+    const [selectedContactId, _setSelectedContactId] = useState<string | null>(null);
+    const setSelectedContactId = (val: string | null) => {
+        console.trace(`[TRACE] setSelectedContactId → ${val}`);
+        _setSelectedContactId(val);
+    };
     const [sending, setSending] = useState(false);
     const [loading, setLoading] = useState(true);
     const [apiOnline, setApiOnline] = useState(true);
@@ -173,10 +214,18 @@ function SalesCRM() {
     const [numbersSyncing, setNumbersSyncing] = useState(false);
     const [pendingDraft, setPendingDraft] = useState<string | null>(null);
     const [apiConfigLoaded, setApiConfigLoaded] = useState(false);
-    const [conversationWindowActive, setConversationWindowActive] = useState<boolean>(false);
+    const [conversationWindowActive, _setConversationWindowActive] = useState<boolean>(false);
+    const setConversationWindowActive = (val: boolean) => {
+        console.trace(`[TRACE] setConversationWindowActive → ${val}`);
+        _setConversationWindowActive(val);
+    };
     const [windowStatusLoading, setWindowStatusLoading] = useState<boolean>(true);
     const [selectedChatMessages, setSelectedChatMessages] = useState<Message[]>([]);
-    const [conversationResponse, setConversationResponse] = useState<ApiConversationResponse | null>(null);
+    const [conversationResponse, _setConversationResponse] = useState<ApiConversationResponse | null>(null);
+    const setConversationResponse = (val: ApiConversationResponse | null) => {
+        console.trace(`[TRACE] setConversationResponse → ${val?.status ?? 'null'}`);
+        _setConversationResponse(val);
+    };
     const [summaryLoading, setSummaryLoading] = useState(false);
     const [summaryError, setSummaryError] = useState<string | null>(null);
 
@@ -184,6 +233,9 @@ function SalesCRM() {
     const selectedContactRef = useRef<Contact | null>(null);
     const webhookFiredRef = useRef(new Set<string>());
     const summaryAbortRef = useRef<AbortController | null>(null);
+    // Timestamp (ms) until which inbox-poll must NOT override conversationWindowActive.
+    // Set after sends/reopens to protect the optimistic "window open" state.
+    const conversationActiveLockUntil = useRef<number>(0);
 
     /** Merge server messages with locally-cached sent messages.
      *  - Preserves Airtable contactIds from previous state
@@ -282,26 +334,6 @@ function SalesCRM() {
             if (!abort.signal.aborted) setSummaryLoading(false);
         }
     }, [addLog]);
-
-    // ─── Extract conversationActive from adapted inbox messages by phone ──────
-    const updateConversationActive = useCallback((adapted: Message[]) => {
-        const selectedId = selectedContactRef.current?.id;
-        if (!selectedId) return;
-
-        const matched = [...adapted].reverse().find((m) =>
-            m.conversationActive !== undefined &&
-            m.airtableContactId === selectedId
-        );
-
-        if (matched) {
-            setConversationWindowActive(!!matched.conversationActive);
-        } else {
-            // No match = contacto sin actividad reciente ? ventana cerrada
-            setConversationWindowActive(false);
-        }
-        // En ambos casos, loading termina
-        setWindowStatusLoading(false);
-    }, []);
 
     // ─── Initialize Dynamic API Configuration ──────────────────
     const initializeApiConfig = useCallback(async () => {
@@ -428,7 +460,6 @@ function SalesCRM() {
                 // Load fresh messages for this number (with merge to preserve sent msgs)
                 const inboxMessages = await getInboxMessages(phoneId);
                 const adaptedMessages = adaptMessagesWithNumber(inboxMessages);
-                updateConversationActive(adaptedMessages);
                 setMessages((prev: Message[]) => mergeWithSentCache(adaptedMessages, prev));
                 
                 // Update stats
@@ -443,7 +474,7 @@ function SalesCRM() {
         } catch (err: any) {
             addLog(`⚠ Inbox status check failed for ${phoneId}: ${(err as Error).message}`);
         }
-    }, [inboxStats, addLog, updateConversationActive]);
+    }, [inboxStats, addLog]);
 
     // ─── Smart Polling: API Health Check ──────────────────────────────────────
     const checkApiHealth = useCallback(async () => {
@@ -603,7 +634,6 @@ function SalesCRM() {
                 const inboxMessages = await getInboxMessages(selectedPhoneNumber);
                 if (!cancelled) {
                     const adapted = adaptMessagesWithNumber(inboxMessages);
-                    updateConversationActive(adapted);
                     setMessages((prev: Message[]) => {
                         const merged = mergeWithSentCache(adapted, prev);
                         // Shallow compare to avoid unnecessary re-renders
@@ -627,7 +657,7 @@ function SalesCRM() {
         const interval = setInterval(pollInboxMessages, POLLING.INBOX_MESSAGES);
 
         return () => { cancelled = true; clearInterval(interval); };
-    }, [selectedPhoneNumber, apiOnline, addLog, updateConversationActive]);
+    }, [selectedPhoneNumber, apiOnline, addLog]);
 
     // ─── Initial load + smart polling (runs once sdkBase is available) ────────
     // sdkBase comes from useBase() — guaranteed non-null after first render.
@@ -677,19 +707,24 @@ function SalesCRM() {
         return () => clearInterval(interval);
     }, [apiOnline, selectedPhoneNumber, checkInboxStatus]);
 
-    // Extract DB contact_id from inbox messages (set by adaptMessageWithNumber.dbContactId)
-    const selectedContactDbId = useMemo(() => {
-        if (!selectedContactId) return undefined;
-        const msg = messages.find((m) => m.airtableContactId === selectedContactId && m.dbContactId);
-        return msg?.dbContactId;
-    }, [messages, selectedContactId]);
+    // selectedContactDbId is now a state variable (useState above).
+    // Resolved by useEffect after messagesWithAirtableIds — see below.
 
     // ─── Trigger window-expired webhook when 24h window closes ──────────────
+    // CRITICAL: this must NOT fire during the initial evaluation window when
+    // conversationWindowActive is still false from the handleOpenConversation reset.
+    // The lock ref prevents this: any contact switch sets the lock, and the 24h-rule
+    // useEffect clears it once it has evaluated. We also guard on windowStatusLoading.
     useEffect(() => {
-        // Guard: only fire when window is confirmed expired, IDs available, not loading
-        if (conversationWindowActive || !selectedContactDbId || !selectedPhoneNumber || windowStatusLoading) return;
+        // Don't fire while window state is still being determined
+        if (windowStatusLoading) return;
+        // Don't fire while send-lock is active (just sent a message)
+        if (conversationActiveLockUntil.current > Date.now()) return;
+        // Window is open — nothing to do
+        if (conversationWindowActive) return;
+        // Need both IDs to build the conversationId
+        if (!selectedContactDbId || !selectedPhoneNumber) return;
 
-        // Precision #1: build conversationId inside the effect scope
         const conversationId = `${selectedPhoneNumber}_${selectedContactDbId}`;
 
         // Fire only once per conversation — prevent duplicate POSTs across poll cycles
@@ -698,42 +733,14 @@ function SalesCRM() {
 
         fireWindowExpiredAndFetch(conversationId);
 
-        // Precision #4: cleanup cancels only the async request, no setState
         return () => {
             summaryAbortRef.current?.abort();
         };
     }, [conversationWindowActive, selectedContactDbId, selectedPhoneNumber, windowStatusLoading, fireWindowExpiredAndFetch]);
 
-    // ─── Poll decrypted messages for selected contact via /api/v1/messages ───
-    // The inbox endpoint (/inbox) returns encrypted text_content.
-    // /api/v1/messages?contact_id=X returns the same messages with decrypted text.
-    useEffect(() => {
-        if (!selectedContactId || !selectedContactDbId || !apiOnline) {
-            setSelectedChatMessages([]);
-            return;
-        }
-        let cancelled = false;
-
-        const loadDecrypted = async () => {
-            try {
-                const raw = await getApiMessages(selectedContactDbId);
-                if (!cancelled) {
-                    const adapted = adaptMessages(raw).map((m: Message) => ({
-                        ...m,
-                        contactId: selectedContactId,
-                    }));
-                    setSelectedChatMessages(adapted);
-                    addLog(`Decrypted: ${adapted.length} msgs for ${selectedContactId}`);
-                }
-            } catch (err: any) {
-                if (!cancelled) addLog(`⚠ Decrypted msgs: ${(err as Error).message}`);
-            }
-        };
-
-        loadDecrypted();
-        const interval = setInterval(loadDecrypted, POLLING.INBOX_MESSAGES);
-        return () => { cancelled = true; clearInterval(interval); };
-    }, [selectedContactId, selectedContactDbId, apiOnline, addLog]);
+    // NOTE: decrypted-message fetcher (dbContactIdsKey + poll) lives AFTER
+    // messagesWithAirtableIds is declared (it depends on it) — see below — to avoid
+    // a temporal-dead-zone use-before-declaration crash.
 
     // ─── Reload Meta templates when selected number changes ─────────────────
     useEffect(() => {
@@ -769,36 +776,127 @@ function SalesCRM() {
 
     // ─── Match messages to Airtable contacts by phone ───────
     const messagesWithAirtableIds = useMemo(() => {
+        // Pre-build entry list for last-10 fallback scan (avoids rebuilding per message)
+        const phoneEntries = [...phoneToContact.entries()];
+
         const result = messages.map((m: Message) => {
-            // For inbound: match on fromNumber (the contact's phone)
-            // For outbound: match on toNumber (we sent TO the contact)
-            // Try multiple phone fields to find the Airtable contact
-            const phonesToTry = m.direction === 'outbound'
-                ? [m.toNumber, m.contactPhone]
-                : [m.fromNumber, m.contactPhone];
+            // Try all three phone fields for both directions.
+            // Rationale: backend convention varies — some store inbound with
+            // from_number = OUR business number and to_number = contact's phone.
+            // Trying all three is safe; our business number is not an Airtable contact.
+            const phonesToTry = [m.toNumber, m.fromNumber, m.contactPhone];
+
             let matched: Contact | undefined;
-            let matchedPhone: string | undefined;
+
+            // Pass 1: exact variant match via map (fast)
             for (const p of phonesToTry) {
                 if (!p) continue;
                 for (const v of phoneVariants(p)) {
                     matched = phoneToContact.get(v);
-                    if (matched) {
-                        matchedPhone = v;
-                        break;
-                    }
+                    if (matched) break;
                 }
                 if (matched) break;
             }
-            
-            
-            // matchedAirtable=true only when we found a real Airtable contact by phone
+
+            // Pass 2: last-10-digit suffix fallback — tolerates 521/52 prefix asymmetry
+            // that Meta may use between inbound fromNumber and Airtable-stored phone.
+            if (!matched) {
+                for (const p of phonesToTry) {
+                    if (!p) continue;
+                    const digits = p.replace(/\D/g, '');
+                    if (digits.length < 10) continue;
+                    const last10 = digits.slice(-10);
+                    for (const [key, contact] of phoneEntries) {
+                        if (key.slice(-10) === last10) {
+                            matched = contact;
+                            break;
+                        }
+                    }
+                    if (matched) break;
+                }
+            }
+
+            // matchedAirtable=true only when we found a real Airtable contact by phone.
+            // Pre-set contactId on optimistic messages is preserved when no phone match.
             return matched
                 ? { ...m, contactId: matched.id, matchedAirtable: true }
                 : { ...m, matchedAirtable: false };
         });
-        
+
         return result;
     }, [messages, phoneToContact]);
+
+    // ─── Poll decrypted messages for selected contact via /api/v1/messages ───
+    // The inbox endpoint (/inbox) returns ENCRYPTED text_content (Fernet "gAAAAA...").
+    // /api/v1/messages?contact_id=X returns the SAME messages with DECRYPTED text.
+    //
+    // CRITICAL: the Python backend may split one phone's thread across MULTIPLE
+    // contact_id values (inbound under one, outbound under another). Fetching a single
+    // anchored id therefore returns only ONE direction. We collect EVERY dbContactId
+    // phone-matched to this Airtable contact and fetch+union all of them, so both
+    // directions come back decrypted regardless of backend duplication.
+    //
+    // selectedContactDbId stays a single anchored scalar — used ONLY for the
+    // AI-summary webhook conversationId, never for this fetch.
+    // (Declared here, after messagesWithAirtableIds, to avoid a TDZ crash.)
+    const dbContactIdsKey = useMemo(() => {
+        if (!selectedContactId) return '';
+        const ids = new Set<number>();
+        for (const m of messagesWithAirtableIds) {
+            const dbId = (m as any).dbContactId as number | undefined;
+            if (m.contactId === selectedContactId && dbId) ids.add(dbId);
+        }
+        return [...ids].sort((a, b) => a - b).join(',');
+    }, [messagesWithAirtableIds, selectedContactId]);
+
+    // messages.length forces an immediate re-fetch when inbox poll delivers a new
+    // message on an EXISTING contact_id (which wouldn't change dbContactIdsKey).
+    const messagesLength = messages.length;
+    useEffect(() => {
+        if (!selectedContactId) {
+            setSelectedChatMessages([]);
+            return;
+        }
+        if (!apiOnline) return;
+        // Contact has no decrypted-fetchable history yet (e.g. brand-new outbound-only
+        // conversation). Do NOT clear — keep any optimistic bubble already injected.
+        if (!dbContactIdsKey) return;
+
+        const ids = dbContactIdsKey.split(',').map(Number);
+        let cancelled = false;
+
+        const loadDecrypted = async () => {
+            try {
+                const batches = await Promise.all(
+                    ids.map((id) =>
+                        getApiMessages(id)
+                            .then((r) => ({ ok: true, r }))
+                            .catch(() => ({ ok: false, r: [] as ApiMessageOut[] })),
+                    ),
+                );
+                if (cancelled) return;
+                // Non-destructive: if ANY batch failed, skip this cycle entirely so we
+                // never drop already-visible history (avoids flicker in the multi-id case).
+                if (batches.some((b) => !b.ok)) {
+                    addLog('⚠ Decrypted fetch: partial failure — keeping current messages');
+                    return;
+                }
+                const adapted = adaptMessages(batches.flatMap((b) => b.r)).map((m: Message) => ({
+                    ...m,
+                    contactId: selectedContactId,
+                }));
+                setSelectedChatMessages((prev) =>
+                    mergeDecryptedWithOptimistic(adapted, prev, selectedContactId),
+                );
+            } catch (err: any) {
+                if (!cancelled) addLog(`⚠ Decrypted msgs: ${(err as Error).message}`);
+            }
+        };
+
+        loadDecrypted();
+        const interval = setInterval(loadDecrypted, POLLING.INBOX_MESSAGES);
+        return () => { cancelled = true; clearInterval(interval); };
+    }, [selectedContactId, dbContactIdsKey, apiOnline, addLog, messagesLength]);
 
     // ─── Unread count filtered to known Airtable contacts only ─────────────
     // Since messages are scoped to selectedPhoneNumber (per-number polling),
@@ -841,6 +939,77 @@ function SalesCRM() {
         
         return filtered;
     }, [inboxStats, messagesWithAirtableIds, selectedPhoneNumber]);
+
+    // ─── Sync conversationWindowActive — 24h timestamp rule ──────────────────
+    // Backend's conversation_active flag is unreliable (often returns false for
+    // recent messages). Instead, use the timestamp of the most recent matched message:
+    // if it's within 24h → window open. Backend flag is intentionally ignored.
+    useEffect(() => {
+        const isLocked = conversationActiveLockUntil.current > Date.now();
+        const selectedId = selectedContactRef.current?.id;
+
+        // Enforce lock: after a send, keep window open regardless of what poll returns.
+        if (isLocked) {
+            setConversationWindowActive(true);
+            setWindowStatusLoading(false);
+            setSummaryLoading(false);
+            return;
+        }
+
+        if (!selectedId) return;
+
+        const contactMsgs = messagesWithAirtableIds.filter((m) => m.contactId === selectedId);
+        if (contactMsgs.length === 0) {
+            setConversationWindowActive(false);
+            setWindowStatusLoading(false);
+            return;
+        }
+
+        // Most recent message by timestamp
+        const latest = contactMsgs.reduce((best, m) => {
+            const mTime = new Date(m.timestamp).getTime();
+            return !isNaN(mTime) && mTime > new Date(best.timestamp).getTime() ? m : best;
+        });
+        const latestTime = new Date(latest.timestamp).getTime();
+        const horasTranscurridas = (Date.now() - latestTime) / (1000 * 60 * 60);
+
+        // Invalid timestamp → don't close window; wait for valid data
+        if (isNaN(horasTranscurridas)) return;
+
+        const windowOpen = horasTranscurridas < 24;
+        setConversationWindowActive(windowOpen);
+        setWindowStatusLoading(false);
+        // Real evaluation done — clear the contact-switch lock early so UI is responsive
+        if (windowOpen) {
+            conversationActiveLockUntil.current = 0;
+            setSummaryLoading(false);
+        }
+    }, [messagesWithAirtableIds]);
+
+    // ─── Resolve DB contact_id from phone-matched messages ──────────────────────
+    // Placed here (after messagesWithAirtableIds) to safely reference it without TDZ.
+    // Priority 1: use any phone-matched message for the selected contact (most reliable).
+    // Priority 2: airtableContactId from the backend (often null).
+    // Result drives selectedChatMessages poll → decrypted text for ChatPanel.
+    useEffect(() => {
+        if (!selectedContactId) {
+            setSelectedContactDbId(undefined);
+            return;
+        }
+        // Anchor: once resolved for this contact, don't change.
+        // Handlers clear it to undefined on contact switch so this re-resolves.
+        setSelectedContactDbId((prev) => {
+            if (prev !== undefined) return prev;
+            const fromMatched = messagesWithAirtableIds.find(
+                (m) => m.contactId === selectedContactId && (m as any).dbContactId
+            );
+            if (fromMatched) return (fromMatched as any).dbContactId;
+            const byAirtable = messages.find(
+                (m) => m.airtableContactId === selectedContactId && m.dbContactId
+            );
+            return byAirtable?.dbContactId;
+        });
+    }, [selectedContactId, messagesWithAirtableIds, messages]);
 
     // ─── Resolve current user's People record id (Blocker B) ──
     // Race-proof: stay in loading state until the People table read finishes.
@@ -894,7 +1063,13 @@ function SalesCRM() {
             .then((rawPhone) => {
                 if (cancelled) return;
                 const myDigits = cleanPhone(rawPhone);
+                console.log(`[WA Match] cleanPhone(Airtable): "${myDigits}" (raw: "${rawPhone}")`);
+                console.log('[WA Match] Available numbers:', availableNumbers.map(
+                    (n) => `${n.phone_number} → digits: ${cleanPhone(n.phone_number)} (id=${n.id})`
+                ));
+
                 if (!myDigits) {
+                    console.warn('[WA Match] No cellphone in People record — chat blocked');
                     addLog('⚠ WhatsApp link: no cellphone in People record');
                     setIsWhatsAppLinked(false);
                     setAssignedWhatsAppNumber(null);
@@ -909,13 +1084,16 @@ function SalesCRM() {
                 if (matched) {
                     // Override auto-selection: pin to the user's own number
                     setSelectedPhoneNumber(matched.id);
+                    console.log(`✅ [WA Match] Número asignado: ${matched.phone_number} (ID: ${matched.id})`);
                     addLog(`✅ WhatsApp linked: ${matched.phone_number} (id=${matched.id})`);
                 } else {
+                    console.warn(`❌ [WA Match] No se encontró el número "${rawPhone}" (digits: "${myDigits}") en la API`);
                     addLog(`⚠ WhatsApp link: no number matched for "${rawPhone}"`);
                 }
             })
             .catch((err) => {
                 if (cancelled) return;
+                console.error('[WA Match] Error fetching cellphone:', (err as Error).message);
                 addLog(`⚠ WhatsApp link error: ${(err as Error).message}`);
                 setIsWhatsAppLinked(false);
                 setAssignedWhatsAppNumber(null);
@@ -978,7 +1156,17 @@ function SalesCRM() {
 
     // Module 2-A → 2-B: open a contact's conversation (3-column view)
     const handleOpenConversation = useCallback((contactId: string) => {
+        summaryAbortRef.current?.abort();
+        webhookFiredRef.current.clear();
+        setConversationResponse(null);
+        setSummaryError(null);
+        setSummaryLoading(false);
+        setSelectedContactDbId(undefined);
+        setSelectedChatMessages([]);
         setSelectedContactId(contactId);
+        setWindowStatusLoading(true);
+        setConversationWindowActive(false);
+        conversationActiveLockUntil.current = Date.now() + 3_000;
         setCurrentView('opp-detail-b');
     }, []);
 
@@ -1005,7 +1193,11 @@ function SalesCRM() {
     // Quick-action: jump to conversation on a channel, then close the modal
     const handleStartConversationFromModal = useCallback((channel: ActiveChannel) => {
         setActiveChannel(channel);
-        if (modalContactId) setSelectedContactId(modalContactId);
+        if (modalContactId) {
+            setSelectedContactDbId(undefined);
+            setSelectedChatMessages([]);
+            setSelectedContactId(modalContactId);
+        }
         setCurrentView('opp-detail-b');
         setIsContactModalOpen(false);
     }, [modalContactId]);
@@ -1122,27 +1314,44 @@ function SalesCRM() {
     selectedContactRef.current = selectedContact;
     const contactMessages = messagesWithAirtableIds.filter((m) => m.contactId === selectedContactId);
 
-    // Prefer decrypted messages from /api/v1/messages; fall back to inbox messages if not yet loaded.
-    // Append any pending optimistic messages (sent but not yet confirmed by server).
+    // Conversation timeline — SINGLE source of truth: selectedChatMessages.
+    // It already holds decrypted inbound + outbound (multi-id fetch) plus optimistic
+    // sends (merged, not replaced). The encrypted contactMessages pipeline NEVER feeds
+    // the display — that was the "toxic mix" that leaked ciphertext / dropped a direction.
+    //   1. Drop any Fernet ciphertext that slipped through ("gAAAAA..." prefix).
+    //   2. Dedup by id AND by metaMessageId (backend may double-store one logical
+    //      message under two contact_ids with different primary keys).
+    //   3. Sort chronologically.
     const chatMessagesToDisplay = useMemo(() => {
-        if (selectedChatMessages.length === 0) return contactMessages;
-        const serverIds = new Set(selectedChatMessages.map((m: Message) => m.id));
-        const pendingOptimistic = contactMessages.filter(
-            (m: Message) => m.isOptimistic && !serverIds.has(m.id)
-        );
-        return [...selectedChatMessages, ...pendingOptimistic];
-    }, [selectedChatMessages, contactMessages]);
+        const seenId = new Set<string>();
+        const seenMeta = new Set<string>();
+        return selectedChatMessages
+            .filter((m: Message) => !(typeof m.text === 'string' && m.text.startsWith('gAAAAA')))
+            .filter((m: Message) => {
+                if (seenId.has(m.id)) return false;
+                seenId.add(m.id);
+                if (m.metaMessageId && seenMeta.has(m.metaMessageId)) return false;
+                if (m.metaMessageId) seenMeta.add(m.metaMessageId);
+                return true;
+            })
+            .sort((a: Message, b: Message) =>
+                new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+            );
+    }, [selectedChatMessages]);
     
     // ─── Mark as read when selecting a conversation ──────────
     const handleSelectContact = useCallback(async (contactId: string | null) => {
-        // Precision #2: cleanup BEFORE changing contact — synchronous, no timing issues
         summaryAbortRef.current?.abort();
         webhookFiredRef.current.clear();
         setConversationResponse(null);
         setSummaryError(null);
+        setSummaryLoading(false);
+        setSelectedContactDbId(undefined);
+        setSelectedChatMessages([]);
         setSelectedContactId(contactId);
         setWindowStatusLoading(true);
         setConversationWindowActive(false);
+        conversationActiveLockUntil.current = Date.now() + 3_000;
         if (!contactId || !apiOnline) return;
 
         // Find unread inbound messages for this contact
@@ -1202,7 +1411,6 @@ function SalesCRM() {
     const handleSendMetaTemplate = useCallback(async (template: Template, parameters: string[]) => {
         if (!selectedContact || sending || !apiOnline) return;
         setSending(true);
-        addLog(`Sending Meta template "${template.name}" to ${selectedContact.phone}`);
 
         const tempId = `temp_${Date.now()}`;
         const optimisticMsg: Message = {
@@ -1220,12 +1428,13 @@ function SalesCRM() {
             toNumber: normalizePhone(selectedContact.phone),
             metaMessageId: '',
             attachments: [],
+            conversationActive: true,
             isOptimistic: true,
         };
         setMessages((prev: Message[]) => [...prev, optimisticMsg]);
+        setSelectedChatMessages((prev) => [...prev, optimisticMsg]);
 
         try {
-            // ✅ Buscar phone_number_id real (Meta) a partir del DB id seleccionado
             const activeNumber = availableNumbers.find(n => n.id === selectedPhoneNumber);
             const result = await sendMetaTemplate(
                 template.name,
@@ -1234,7 +1443,6 @@ function SalesCRM() {
                 template.language,
                 activeNumber?.phone_number_id ?? null,
             );
-            addLog(`Meta template sent OK: id=${result.id}, meta_id=${result.meta_message_id}`);
 
             const confirmedTemplateMsg: Message = {
                 ...optimisticMsg,
@@ -1245,17 +1453,17 @@ function SalesCRM() {
             };
             sentMessagesRef.current = [...sentMessagesRef.current, confirmedTemplateMsg];
 
-            setMessages((prev: Message[]) =>
-                prev.map((m: Message) => m.id === tempId ? confirmedTemplateMsg : m),
-            );
+            setMessages((prev: Message[]) => prev.map((m: Message) => m.id === tempId ? confirmedTemplateMsg : m));
+            setSelectedChatMessages((prev) => prev.map((m) => m.id === tempId ? confirmedTemplateMsg : m));
+
+            conversationActiveLockUntil.current = Date.now() + 15_000;
+            setConversationWindowActive(true);
+            setWindowStatusLoading(false);
             notify('success', `Plantilla "${template.name}" enviada a ${selectedContact.displayName}`);
         } catch (err: any) {
-            console.error('❌ ERROR sendMetaTemplate completo:', err);
-            console.error('❌ ERROR mensaje:', err.message);
             addLog(`ERROR sendMetaTemplate: ${err.message}`);
-            setMessages((prev: Message[]) =>
-                prev.map((m: Message) => (m.id === tempId ? { ...m, status: 'failed' as const, isOptimistic: false } : m)),
-            );
+            setMessages((prev: Message[]) => prev.map((m: Message) => (m.id === tempId ? { ...m, status: 'failed' as const, isOptimistic: false } : m)));
+            setSelectedChatMessages((prev) => prev.filter((m) => m.id !== tempId));
             notify('error', `Error al enviar plantilla: ${err.message}`);
         } finally {
             setSending(false);
@@ -1313,6 +1521,11 @@ function SalesCRM() {
                 );
             }
             addLog(`Reopen template sent OK to ${selectedContact.phone}`);
+            // Reopen = 24h window just opened → unblock composer immediately.
+            conversationActiveLockUntil.current = Date.now() + 15_000;
+            setConversationWindowActive(true);
+            setWindowStatusLoading(false);
+            console.log('✅ Conversación reabierta, activando UI...');
             notify('success', `Conversación reabierta con ${selectedContact.displayName}`);
             return { success: true };
         } catch (err: any) {
@@ -1365,12 +1578,12 @@ function SalesCRM() {
                 const reader = new FileReader();
                 reader.onload = () => {
                     const base64Url = reader.result as string;
-                    setMessages((prev) =>
-                        prev.map((m) => (m.id === tempId ? {
-                            ...m,
-                            attachments: m.attachments.map(a => ({ ...a, url: base64Url }))
-                        } : m))
-                    );
+                    const patch = (m: Message) => (m.id === tempId ? {
+                        ...m,
+                        attachments: m.attachments.map(a => ({ ...a, url: base64Url })),
+                    } : m);
+                    setMessages((prev) => prev.map(patch));
+                    setSelectedChatMessages((prev) => prev.map(patch));
                 };
                 reader.readAsDataURL(file);
             }
@@ -1398,6 +1611,7 @@ function SalesCRM() {
             isOptimistic: true,
         };
         setMessages((prev) => [...prev, optimisticMsg]);
+        setSelectedChatMessages((prev) => [...prev, optimisticMsg]);
 
         try {
             const result = await sendMediaMessage(
@@ -1405,8 +1619,10 @@ function SalesCRM() {
                 file,
             );
             addLog(`Media sent OK: id=${result.id}, meta_id=${result.meta_message_id}`);
-            
-            // Build confirmed message and cache in ref
+
+            // Build confirmed message and cache in ref.
+            // Prefer the numeric DB id (server decrypted row is keyed by String(raw.id));
+            // metaMessageId dedup in the display/merge covers the fallback case.
             const confirmedMediaMsg: Message = {
                 ...optimisticMsg,
                 id: String(result.id || result.meta_message_id),
@@ -1420,8 +1636,11 @@ function SalesCRM() {
             };
             sentMessagesRef.current = [...sentMessagesRef.current, confirmedMediaMsg];
 
-            // Update optimistic message with real data
+            // Update optimistic message with real data in BOTH pipelines
             setMessages((prev) =>
+                prev.map((m) => (m.id === tempId ? confirmedMediaMsg : m))
+            );
+            setSelectedChatMessages((prev) =>
                 prev.map((m) => (m.id === tempId ? confirmedMediaMsg : m))
             );
             notify('success', 'Archivo enviado correctamente');
@@ -1431,6 +1650,7 @@ function SalesCRM() {
             setMessages((prev) =>
                 prev.map((m) => (m.id === tempId ? { ...m, status: 'failed', isOptimistic: false } : m))
             );
+            setSelectedChatMessages((prev) => prev.filter((m) => m.id !== tempId));
             notify('error', `Error al enviar archivo: ${error.message}`);
         } finally {
             setSending(false);
@@ -1462,9 +1682,7 @@ function SalesCRM() {
     const handleSend = useCallback(async (text: string) => {
         if (!selectedContact || sending || !apiOnline) return;
         setSending(true);
-        addLog(`Sending to ${selectedContact.phone}: ${text.substring(0, 30)}...`);
 
-        // Optimistic UI — add temp message instantly
         const tempId = `temp_${Date.now()}`;
         const optimisticMsg: Message = {
             id: tempId,
@@ -1479,9 +1697,12 @@ function SalesCRM() {
             toNumber: normalizePhone(selectedContact.phone),
             metaMessageId: '',
             attachments: [],
+            conversationActive: true,
             isOptimistic: true,
         };
+        // Inject into BOTH pipelines so the bubble appears instantly
         setMessages((prev) => [...prev, optimisticMsg]);
+        setSelectedChatMessages((prev) => [...prev, optimisticMsg]);
 
         try {
             const result = await sendApiMessageFromNumber(
@@ -1489,9 +1710,7 @@ function SalesCRM() {
                 text,
                 selectedPhoneNumber ? String(selectedPhoneNumber) : undefined,
             );
-            addLog(`Sent OK: id=${result.id}, meta_id=${result.meta_message_id}`);
 
-            // Build confirmed message and cache it in ref
             const confirmedMsg: Message = {
                 ...optimisticMsg,
                 id: String(result.id),
@@ -1501,24 +1720,39 @@ function SalesCRM() {
             };
             sentMessagesRef.current = [...sentMessagesRef.current, confirmedMsg];
 
-            // Replace optimistic with confirmed in state
-            setMessages((prev) =>
-                prev.map((m) =>
-                    m.id === tempId ? confirmedMsg : m
-                ),
-            );
+            setMessages((prev) => prev.map((m) => m.id === tempId ? confirmedMsg : m));
+            setSelectedChatMessages((prev) => prev.map((m) => m.id === tempId ? confirmedMsg : m));
+
+            conversationActiveLockUntil.current = Date.now() + 15_000;
+            setConversationWindowActive(true);
+            setWindowStatusLoading(false);
             notify('success', `Mensaje enviado a ${selectedContact.displayName}`);
         } catch (err: any) {
             addLog(`ERROR send: ${err.message}`);
-            // Mark optimistic as failed
-            setMessages((prev) =>
-                prev.map((m) => (m.id === tempId ? { ...m, status: 'failed', isOptimistic: false } : m)),
-            );
+            setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, status: 'failed', isOptimistic: false } : m)));
+            setSelectedChatMessages((prev) => prev.filter((m) => m.id !== tempId));
             notify('error', `Error al enviar: ${err.message}`);
         } finally {
             setSending(false);
         }
     }, [selectedContact, sending, apiOnline, addLog, notify, selectedPhoneNumber]);
+
+    // ─── DIAGNOSTIC: fires on EVERY render ──────────────────
+    console.log('[RENDER ROOT]', {
+        currentView,
+        selectedContactId,
+        selectedContactDbId,
+        conversationWindowActive,
+        windowStatusLoading,
+        summaryLoading,
+        conversationResponseStatus: conversationResponse?.status ?? null,
+        contactMessagesLen: contactMessages?.length,
+        selectedChatMessagesLen: selectedChatMessages?.length,
+        chatDisplayLen: chatMessagesToDisplay?.length,
+        selectedOpportunityId: selectedOpportunity?.id ?? null,
+        selectedContactExists: !!selectedContact,
+        lockActive: conversationActiveLockUntil.current > Date.now(),
+    });
 
     // ─── Loading state ──────────────────────────────────────
     if (loading) {
@@ -1629,7 +1863,7 @@ function SalesCRM() {
                 opportunity={selectedOpportunity}
                 contact={selectedContact}
                 linkedContacts={oppLinkedContacts}
-                onSelectContact={setSelectedContactId}
+                onSelectContact={handleSelectContact as (id: string) => void}
                 activeChannel={activeChannel}
                 onChannelChange={setActiveChannel}
                 onViewContact={handleOpenContactModal}

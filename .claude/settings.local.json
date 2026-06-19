@@ -14,7 +14,11 @@
       "Bash(python -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:p[k] for k in ['scripts','devDependencies'] if k in p}, indent=2\\)\\)\")",
       "Bash(git -C \"C:\\\\Users\\\\CarlosAbreu\\\\OneDrive - MEGAWATTS SAPI DE CV\\\\Documentos\\\\Airtable_Extension\" ls-files)",
       "Bash(npx eslint *)",
-      "Bash(node -e \"try{console.log\\('tw', require\\('./node_modules/tailwindcss/package.json'\\).version\\)}catch\\(e\\){console.log\\('no tw pkg'\\)}\")"
+      "Bash(node -e \"try{console.log\\('tw', require\\('./node_modules/tailwindcss/package.json'\\).version\\)}catch\\(e\\){console.log\\('no tw pkg'\\)}\")",
+      "PowerShell(git -C \"C:\\\\Users\\\\CarlosAbreu\\\\OneDrive - MEGAWATTS SAPI DE CV\\\\Documentos\\\\Airtable_Extension\" log --oneline -15)",
+      "Bash(gh pr *)",
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget"
     ]
   }
 }

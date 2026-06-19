@@ -139,7 +139,7 @@ export async function getDynamicApiConfig(): Promise<ApiConfigResponse> {
     ];
 
     for (const baseUrl of possibleUrls) {
-        console.log(`🔍 Trying config from: ${baseUrl}/api/config`);
+        console.debug(`[Config] Trying ${baseUrl}/api/config`);
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -155,26 +155,17 @@ export async function getDynamicApiConfig(): Promise<ApiConfigResponse> {
 
             clearTimeout(timeoutId);
 
-            console.log(`📡 Response from ${baseUrl}: status=${response.status}`);
-
             if (response.ok) {
                 const config = await response.json();
-                
-                // Update global configuration
                 setApiConfig(config);
-                
-                console.log(`✅ Dynamic config loaded from: ${baseUrl}`);
-                console.log('📡 API Configuration:', config);
-                
+                console.log(`✅ API config loaded from: ${baseUrl}`);
                 return config;
             } else {
-                console.warn(`⚠ Non-OK response from ${baseUrl}: ${response.status} ${response.statusText}`);
+                console.debug(`[Config] Non-OK from ${baseUrl}: ${response.status}`);
             }
         } catch (error) {
-            console.warn(`❌ Failed to get config from ${baseUrl}:`, error);
-            if (error instanceof Error) {
-                console.warn(`   Error name: ${error.name}, message: ${error.message}`);
-            }
+            // Network/abort errors on localhost probes are expected — suppress to debug
+            console.debug(`[Config] Probe failed ${baseUrl}: ${error instanceof Error ? error.message : error}`);
             continue;
         }
     }
@@ -204,11 +195,10 @@ export async function checkHealth(): Promise<boolean> {
         clearTimeout(timeoutId);
         
         if (err.name === 'AbortError') {
-            console.warn('Health check timeout - API may be slow or unreachable');
+            console.debug('[Health] Timeout — API slow or unreachable');
             return false;
         }
-        
-        console.warn('Health check failed:', err.message);
+        console.debug('[Health] Failed:', err.message);
         return false;
     }
 }
