@@ -26,6 +26,7 @@ interface OpportunityDetailViewBProps {
     onAddNote?: () => void;
     /** Interaction history for this opportunity (drives Notas + Historial). */
     interactions?: Interaction[];
+    onInteractionCreated?: (it: Interaction) => void;
 
     // ── ChatPanel props ──────────────────────────────────────────────────────
     messages?: Message[];
@@ -73,6 +74,7 @@ export function OpportunityDetailViewB({
     onAddInteraction,
     onAddNote,
     interactions = [],
+    onInteractionCreated,
     messages = [],
     templates,
     onSend,
@@ -289,7 +291,7 @@ export function OpportunityDetailViewB({
                         </div>
                     )
                 ) : (
-                    <EmailPanel contactEmail={contact.email} contactId={contact.id} contactName={contact.displayName} opportunityId={opp.id} />
+                    <EmailPanel contactEmail={contact.email} contactId={contact.id} contactName={contact.displayName} opportunityId={opp.id} onInteractionCreated={onInteractionCreated} />
                 )}
             </main>
 

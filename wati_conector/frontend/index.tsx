@@ -1144,6 +1144,19 @@ function SalesCRM() {
         );
     }, [interactions, oppLinkedContacts, selectedOpportunityId]);
 
+    // Auto-refresh interactions every 20s while viewing an opportunity,
+    // and immediately on tab focus (catches edits/deletes done in Airtable directly).
+    useEffect(() => {
+        const refresh = () => getInteractions().then(setInteractions).catch(() => {});
+        const interval = setInterval(refresh, 20_000);
+        const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            clearInterval(interval);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
+    }, []);
+
     const handleSelectOpportunity = useCallback((id: string) => {
         setSelectedOpportunityId(id);
         setCurrentView('opp-detail-a');
@@ -1574,15 +1587,38 @@ function SalesCRM() {
                 } catch (_) { /* continuar sin el tipo */ }
             }
 
-            // Guardar en Interaction History usando el SDK (igual que notas manuales)
-            await createInteraction({
+            // Optimistic entry — visible immediately while Airtable write is in flight
+            const tempId = `opt-galea-${Date.now()}`;
+            const optimistic: Interaction = {
+                id: tempId,
+                name: 'Análisis Galea',
+                type: (data.types as string[]) || [],
+                dateExecuted: new Date().toISOString(),
                 notes: '',
-                typeIds: allTypeIds,
                 aiNotes: data.aiNotes,
+                team: [],
+                accountId: '',
                 contactId: selectedContact.id,
-                opportunityId: selectedOpportunity?.id,
-                participantEmail: currentUserEmail,
-            });
+                opportunityId: selectedOpportunity?.id || '',
+                channel: 'whatsapp',
+                isOptimistic: true,
+            };
+            setInteractions((prev) => [optimistic, ...prev]);
+
+            try {
+                const saved = await createInteraction({
+                    notes: '',
+                    typeIds: allTypeIds,
+                    aiNotes: data.aiNotes,
+                    contactId: selectedContact.id,
+                    opportunityId: selectedOpportunity?.id,
+                    participantEmail: currentUserEmail,
+                });
+                setInteractions((prev) => prev.map((it) => (it.id === tempId ? saved : it)));
+            } catch (saveErr: any) {
+                setInteractions((prev) => prev.filter((it) => it.id !== tempId));
+                throw saveErr;
+            }
 
             notify('success', `Galea: ${(data.types as string[])?.join(', ') || 'categorizado'}`);
         } catch (err: any) {
@@ -1944,6 +1980,7 @@ function SalesCRM() {
                 conversationResponse={conversationResponse}
                 summaryLoading={summaryLoading}
                 summaryError={summaryError}
+                onInteractionCreated={(it) => setInteractions((prev) => [it, ...prev])}
             />
 
             <ContactModal

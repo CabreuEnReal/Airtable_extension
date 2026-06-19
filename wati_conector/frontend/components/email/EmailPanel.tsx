@@ -552,7 +552,7 @@ function ThreadView({
 
 // ─── Main EmailPanel ──────────────────────────────────────────────────────────
 
-export function EmailPanel({ contactEmail, contactId, contactName, opportunityId }: EmailPanelProps) {
+export function EmailPanel({ contactEmail, contactId, contactName, opportunityId, onInteractionCreated }: EmailPanelProps) {
     const session = useSession();
     const airtableUserId = (session as any)?.currentUser?.id;
     const userEmail = (session as any)?.currentUser?.email ?? '';
@@ -851,7 +851,7 @@ export function EmailPanel({ contactEmail, contactId, contactName, opportunityId
             }
 
             // Guardar en Interaction History usando el SDK
-            await createInteraction({
+            const saved = await createInteraction({
                 notes: '',
                 typeIds: allTypeIds,
                 aiNotes: data.aiNotes,
@@ -859,6 +859,7 @@ export function EmailPanel({ contactEmail, contactId, contactName, opportunityId
                 opportunityId,
                 participantEmail: userEmail,
             });
+            onInteractionCreated?.(saved);
 
             setNotification({
                 id: Date.now().toString(),
