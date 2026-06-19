@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from '@airtable/blocks/interface/ui';
-import type { Conversation, ConversationMessage, Notification } from '../../types/models';
+import type { Conversation, ConversationMessage, EmailAttachment, Notification } from '../../types/models';
 import { Avatar } from '../common/Avatar';
 import { EmptyState } from '../common/EmptyState';
 import { Spinner } from '../common/Spinner';
@@ -8,12 +8,15 @@ import { Toast } from '../common/Toast';
 
 interface EmailPanelProps {
     contactEmail?: string;
+    contactId?: string;
+    contactName?: string;
 }
 
 const N8N_BASE = 'https://n8n.energiareal.mx';
 const N8N_LOGIN_URL = `${N8N_BASE}/webhook/oauth/login`;
 const N8N_GET_EMAILS_URL = `${N8N_BASE}/webhook/get-emails`;
 const N8N_SEND_EMAIL_URL = `${N8N_BASE}/webhook/send-email`;
+const N8N_ANALYZE_URL = `${N8N_BASE}/webhook/analyze-conversation`;
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -35,6 +38,215 @@ function formatFullDate(dateStr: string): string {
         minute: '2-digit',
     });
 }
+
+
+
+// ─── Attachment chip + helpers ────────────────────────────────────────────────
+
+function fileIcon(contentType: string): string {
+    if (contentType.startsWith('image/')) return '🖼';
+    if (contentType === 'application/pdf') return '📄';
+    if (contentType.startsWith('video/')) return '🎬';
+    if (contentType.startsWith('audio/')) return '🎵';
+    if (contentType.includes('word')) return '📝';
+    if (contentType.includes('excel') || contentType.includes('sheet')) return '📊';
+    return '📎';
+}
+
+function formatSize(bytes: number): string {
+    if (bytes === 0) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / 1_048_576).toFixed(1)} MB`;
+}
+
+// ─── Attachment preview modal ─────────────────────────────────────────────────
+
+function EmailPreviewModal({ att, onClose }: { att: EmailAttachment; onClose: () => void }) {
+    const [blobUrl, setBlobUrl] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        let objectUrl: string | null = null;
+        let cancelled = false;
+
+        async function fetchBlob() {
+            try {
+                const res = await fetch(att.downloadUrl);
+                if (!res.ok) throw new Error(`HTTP ${res.status} — verifica n8n proxy`);
+
+                // n8n returns JSON { contentBytes: base64, contentType, fileName }
+                // Decode in browser → avoids n8n binary streaming encoding bugs
+                const data = await res.json();
+                if (cancelled) return;
+
+                if (!data.contentBytes) throw new Error(`Sin contentBytes. Respuesta del proxy: ${JSON.stringify(Object.keys(data))}`);
+
+                // Graph API wraps base64 at 76 chars — atob() throws on whitespace
+                const raw = atob(data.contentBytes.replace(/[\r\n\s]/g, ''));
+                const bytes = new Uint8Array(raw.length);
+                for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+                const mimeType = data.contentType || att.contentType || 'application/octet-stream';
+                const blob = new Blob([bytes], { type: mimeType });
+
+                objectUrl = URL.createObjectURL(blob);
+                setBlobUrl(objectUrl);
+            } catch (e) {
+                if (!cancelled) setError(e instanceof Error ? e.message : 'Error al cargar');
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        }
+
+        fetchBlob();
+        return () => {
+            cancelled = true;
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+        };
+    }, [att.downloadUrl]);
+
+    function handleDownload() {
+        if (!blobUrl) return;
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = att.name;
+        a.click();
+    }
+
+    const isImage = att.contentType.startsWith('image/');
+    const isPdf = att.contentType === 'application/pdf';
+    const isVideo = att.contentType.startsWith('video/');
+    const canPreview = isImage || isPdf || isVideo;
+
+    return (
+        <div
+            className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+            onClick={onClose}
+        >
+            <div
+                className={`bg-white rounded-xl overflow-hidden shadow-2xl flex flex-col ${
+                    isPdf ? 'w-[90vw] h-[90vh] max-w-4xl' : 'max-w-3xl max-h-[90vh] w-full'
+                }`}
+                onClick={e => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm leading-none">{fileIcon(att.contentType)}</span>
+                        <span className="text-xs font-semibold text-gray-700 truncate max-w-[260px]">{att.name}</span>
+                        {att.size > 0 && (
+                            <span className="text-[10px] text-gray-400 shrink-0">{formatSize(att.size)}</span>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 ml-3">
+                        {blobUrl && (
+                            <button
+                                onClick={handleDownload}
+                                className="flex items-center gap-1 px-3 py-1.5 bg-primary text-white text-xs font-semibold rounded-lg hover:bg-primary/90 transition-colors"
+                            >
+                                ⬇ Descargar
+                            </button>
+                        )}
+                        <button
+                            onClick={onClose}
+                            className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors text-xl leading-none"
+                        >
+                            ×
+                        </button>
+                    </div>
+                </div>
+
+                {/* Body */}
+                <div className={`overflow-auto flex items-center justify-center ${isPdf ? 'flex-1' : 'p-4 min-h-[180px]'}`}>
+                    {loading && (
+                        <div className="flex flex-col items-center gap-2 py-10">
+                            <Spinner size="md" />
+                            <span className="text-xs text-gray-400">Cargando adjunto...</span>
+                        </div>
+                    )}
+                    {error && (
+                        <div className="flex flex-col items-center gap-2 py-10">
+                            <span className="text-3xl">⚠️</span>
+                            <p className="text-xs text-red-500 text-center max-w-[280px]">{error}</p>
+                            <button
+                                onClick={() => navigator.clipboard?.writeText(att.downloadUrl)}
+                                className="mt-1 px-3 py-1.5 border border-gray-200 text-xs text-gray-600 rounded-lg hover:bg-gray-50"
+                                title={att.downloadUrl}
+                            >
+                                Copiar URL del proxy
+                            </button>
+                        </div>
+                    )}
+                    {!loading && !error && blobUrl && (
+                        <>
+                            {isImage && (
+                                <img src={blobUrl} alt={att.name} className="max-w-full h-auto rounded" />
+                            )}
+                            {isPdf && (
+                                <iframe src={blobUrl} title={att.name} className="w-full h-full border-0" />
+                            )}
+                            {isVideo && (
+                                <video src={blobUrl} controls className="max-w-full h-auto rounded" />
+                            )}
+                            {!canPreview && (
+                                <div className="flex flex-col items-center gap-3 py-10">
+                                    <span className="text-5xl">{fileIcon(att.contentType)}</span>
+                                    <p className="text-xs text-gray-500">Vista previa no disponible</p>
+                                    <button
+                                        onClick={handleDownload}
+                                        className="px-4 py-2 bg-primary text-white text-xs font-semibold rounded-lg hover:bg-primary/90"
+                                    >
+                                        ⬇ Descargar archivo
+                                    </button>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ─── Attachment chip ──────────────────────────────────────────────────────────
+
+function EmailAttachmentChip({ att, isSent }: { att: EmailAttachment; isSent: boolean }) {
+    const [showPreview, setShowPreview] = useState(false);
+
+    return (
+        <>
+            <button
+                onClick={() => setShowPreview(true)}
+                className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border transition-colors text-left ${
+                    isSent
+                        ? 'bg-white/15 border-white/30 hover:bg-white/25'
+                        : 'bg-white border-gray-200 hover:border-primary hover:bg-green-light3/40'
+                }`}
+            >
+                <span className="text-sm leading-none">{fileIcon(att.contentType)}</span>
+                <div className="min-w-0">
+                    <div className={`text-[10px] font-semibold truncate max-w-[140px] ${isSent ? 'text-white' : 'text-gray-700'}`}>
+                        {att.name}
+                    </div>
+                    {att.size > 0 && (
+                        <div className={`text-[9px] ${isSent ? 'text-white/70' : 'text-gray-400'}`}>
+                            {formatSize(att.size)}
+                        </div>
+                    )}
+                </div>
+                <span className={`text-[10px] shrink-0 ${isSent ? 'text-white/70' : 'text-gray-400'}`}>
+                    👁
+                </span>
+            </button>
+
+            {showPreview && (
+                <EmailPreviewModal att={att} onClose={() => setShowPreview(false)} />
+            )}
+        </>
+    );
+}
+
 
 // ─── Conversation list item ───────────────────────────────────────────────────
 
@@ -78,6 +290,11 @@ function ThreadBubble({ message, contactEmail }: { message: ConversationMessage;
     const isSent = message.direction === 'sent'
         || (message.direction !== 'received' && message.from.email !== contactEmail);
 
+    const htmlContent = message.body_html || '';
+    const textContent = message.body_text || message.body || 'Sin contenido';
+    const hasHtml = htmlContent.length > 0;
+    const attachments = message.attachments || [];
+
     return (
         <div className={`flex flex-col gap-1 ${isSent ? 'items-end' : 'items-start'}`}>
             <div className="flex items-center gap-1.5 px-1">
@@ -86,6 +303,7 @@ function ThreadBubble({ message, contactEmail }: { message: ConversationMessage;
                     {message.from.name} · {formatFullDate(message.receivedDateTime)}
                 </span>
             </div>
+
             <div
                 className={`max-w-[88%] rounded-xl px-3 py-2.5 ${
                     isSent
@@ -93,16 +311,41 @@ function ThreadBubble({ message, contactEmail }: { message: ConversationMessage;
                         : 'bg-gray-100 text-gray-700 rounded-tl-sm'
                 } ${message.status === 'sending' ? 'opacity-70' : ''}`}
             >
-                <p className="text-xs leading-relaxed whitespace-pre-wrap">
-                    {message.body || 'Sin contenido'}
-                </p>
-                {message.hasAttachments && (
-                    <span className="text-[10px] opacity-60 ml-1 block mt-1">📎 Adjunto</span>
+                {hasHtml ? (
+                    <iframe
+                        srcDoc={`<style>
+                            html,body{margin:0;padding:0;font-family:system-ui,sans-serif;font-size:12px;
+                            color:${isSent ? '#fff' : '#374151'};word-break:break-word;overflow-wrap:break-word;}
+                            a{color:${isSent ? '#bfdbfe' : '#0d6efd'};}
+                            img{max-width:100%;height:auto;}
+                            blockquote,div[id*="divRplyFwd"]{display:none;}
+                        </style>${htmlContent}`}
+                        className="w-full border-0 bg-transparent block"
+                        style={{ minHeight: '32px', maxHeight: '320px' }}
+                        sandbox="allow-same-origin"
+                        onLoad={(e) => {
+                            const iframe = e.currentTarget;
+                            const body = iframe.contentDocument?.body;
+                            if (body) {
+                                iframe.style.height = `${Math.min(body.scrollHeight + 8, 320)}px`;
+                            }
+                        }}
+                    />
+                ) : (
+                    <p className="text-xs leading-relaxed whitespace-pre-wrap">{textContent}</p>
                 )}
+
+                {attachments.length > 0 && (
+                    <div className={`flex flex-wrap gap-1.5 mt-2 pt-2 border-t ${isSent ? 'border-white/20' : 'border-gray-200'}`}>
+                        {attachments.map(att => (
+                            <EmailAttachmentChip key={att.id} att={att} isSent={isSent} />
+                        ))}
+                    </div>
+                )}
+
                 {message.status === 'sending' && (
                     <div className="flex items-center gap-1 mt-1.5">
-                        <Spinner size="sm" />
-                        <span className="text-[10px] opacity-70">Enviando...</span>
+                        <Spinner size="sm" /><span className="text-[10px] opacity-70">Enviando...</span>
                     </div>
                 )}
                 {message.status === 'failed' && (
@@ -113,6 +356,7 @@ function ThreadBubble({ message, contactEmail }: { message: ConversationMessage;
     );
 }
 
+
 // ─── File helpers ────────────────────────────────────────────────────────────
 
 function fileToBase64(file: File): Promise<string> {
@@ -122,14 +366,6 @@ function fileToBase64(file: File): Promise<string> {
         reader.onerror = reject;
         reader.readAsDataURL(file);
     });
-}
-
-function fileIcon(type: string): string {
-    if (type.startsWith('image/')) return '🖼';
-    if (type === 'application/pdf') return '📄';
-    if (type.startsWith('video/')) return '🎬';
-    if (type.startsWith('audio/')) return '🎵';
-    return '📎';
 }
 
 // ─── Thread view ──────────────────────────────────────────────────────────────
@@ -143,6 +379,8 @@ function ThreadView({
     setReplyText,
     attachments,
     setAttachments,
+    onAnalyze,
+    isAnalyzing = false,
 }: {
     conversation: Conversation;
     contactEmail: string;
@@ -152,6 +390,8 @@ function ThreadView({
     setReplyText: (v: string) => void;
     attachments: File[];
     setAttachments: (files: File[]) => void;
+    onAnalyze?: () => Promise<void>;
+    isAnalyzing?: boolean;
 }) {
     const [isSending, setIsSending] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
@@ -201,13 +441,24 @@ function ThreadView({
 
     return (
         <div className="flex flex-col h-full overflow-hidden">
-            <div className="px-3 py-2.5 border-b border-gray-100 shrink-0">
+            <div className="px-3 py-2.5 border-b border-gray-100 shrink-0 flex items-center justify-between">
                 <button
                     onClick={onBack}
                     className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 transition-colors font-medium"
                 >
                     ← Volver a la lista
                 </button>
+                {onAnalyze && (
+                    <button
+                        onClick={onAnalyze}
+                        disabled={isAnalyzing}
+                        title="Analizar conversación con Galea IA"
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+                    >
+                        {isAnalyzing ? <Spinner size="sm" /> : <span>🤖</span>}
+                        <span>{isAnalyzing ? 'Analizando...' : 'Analizar con Galea'}</span>
+                    </button>
+                )}
             </div>
 
             <div className="px-4 py-2.5 border-b border-gray-100 shrink-0 bg-gray-50">
@@ -298,7 +549,7 @@ function ThreadView({
 
 // ─── Main EmailPanel ──────────────────────────────────────────────────────────
 
-export function EmailPanel({ contactEmail }: EmailPanelProps) {
+export function EmailPanel({ contactEmail, contactId, contactName }: EmailPanelProps) {
     const session = useSession();
     const airtableUserId = (session as any)?.currentUser?.id;
     const popupRef = useRef<Window | null>(null);
@@ -312,6 +563,7 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
     const [notification, setNotification] = useState<Notification | null>(null);
     const [replyText, setReplyText] = useState('');
     const [attachments, setAttachments] = useState<File[]>([]);
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
 
     // Reset when contact changes
     useEffect(() => {
@@ -445,12 +697,16 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
         const tempMessage: ConversationMessage = {
             id: `temp-${Date.now()}`,
             conversationId: selectedConversation.conversationId,
-            hasAttachments: attachments.length > 0,
-            body: replyTextParam,
             from: { name: myName, email: myEmail },
             receivedDateTime: new Date().toISOString(),
             direction: 'sent',
             status: 'sending',
+            body_html: '',
+            body_text: replyTextParam,
+            attachments: [],
+            // legacy compat
+            body: replyTextParam,
+            hasAttachments: attachments.length > 0,
         };
 
         const previousConversationState: Conversation = JSON.parse(JSON.stringify(selectedConversation));
@@ -549,6 +805,55 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
         }
     };
 
+    // ─── Galea AI analysis ───────────────────────────────────────────────────
+
+    const handleAnalyzeWithGalea = async () => {
+        if (!selectedConversation || isAnalyzing || !contactId || !airtableUserId) return;
+        setIsAnalyzing(true);
+        try {
+            const messages = selectedConversation.messages.map(msg => ({
+                from: msg.from.name,
+                text: msg.body_text || msg.body || '',
+                date: msg.receivedDateTime,
+                direction: (msg.direction === 'sent' || msg.from.email !== contactEmail) ? 'outbound' : 'inbound',
+            }));
+
+            const res = await fetch(N8N_ANALYZE_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    channel: 'email',
+                    airtableUserId,
+                    contactId,
+                    contactName: contactName || contactEmail || 'Contacto',
+                    messages,
+                    subject: selectedConversation.subject,
+                }),
+            });
+
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            if (data.success) {
+                setNotification({
+                    id: Date.now().toString(),
+                    type: 'success',
+                    text: `Galea analizó el hilo: ${(data.types as string[] | undefined)?.join(', ') || 'categorizado'}`,
+                });
+            } else {
+                throw new Error(data.error || 'Error en el análisis');
+            }
+        } catch (err: any) {
+            setNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                text: `Error en Galea: ${err.message}`,
+            });
+        } finally {
+            setIsAnalyzing(false);
+        }
+    };
+
     // ─── Guards ───────────────────────────────────────────────────────────────
 
     if (!contactEmail) {
@@ -633,6 +938,8 @@ export function EmailPanel({ contactEmail }: EmailPanelProps) {
                     setReplyText={setReplyText}
                     attachments={attachments}
                     setAttachments={setAttachments}
+                    onAnalyze={contactId ? handleAnalyzeWithGalea : undefined}
+                    isAnalyzing={isAnalyzing}
                 />
                 <Toast notification={notification} onDismiss={() => setNotification(null)} duration={3000} />
             </>

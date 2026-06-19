@@ -1535,6 +1535,42 @@ function SalesCRM() {
         }
     }, [selectedContact, apiOnline, addLog, notify, selectedPhoneNumber, templates]);
 
+    // ─── Galea AI: Analyze WhatsApp conversation ─────────────────────────────
+    const handleAnalyzeWAConversation = useCallback(async () => {
+        const userId = (session as any)?.currentUser?.id;
+        if (!selectedContact || !userId || chatMessagesToDisplay.length === 0) return;
+
+        const messages = chatMessagesToDisplay.map((m: Message) => ({
+            from: (m as any).senderName || (m.direction === 'outbound' ? 'Vendedor' : selectedContact.displayName),
+            text: (m as any).text || (m as any).body || '',
+            date: (m as any).timestamp || new Date().toISOString(),
+            direction: m.direction === 'outbound' ? 'outbound' : 'inbound',
+        }));
+
+        try {
+            const res = await fetch('https://n8n.energiareal.mx/webhook/analyze-conversation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    channel: 'whatsapp',
+                    airtableUserId: userId,
+                    contactId: selectedContact.id,
+                    contactName: selectedContact.displayName,
+                    messages,
+                }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            if (data.success) {
+                notify('success', `Galea analizó la conversación: ${(data.types as string[] | undefined)?.join(', ') || 'categorizado'}`);
+            } else {
+                throw new Error(data.error || 'Error en el análisis');
+            }
+        } catch (err: any) {
+            notify('error', `Error en Galea: ${err.message}`);
+        }
+    }, [selectedContact, session, chatMessagesToDisplay, notify]);
+
     // ─── Select Airtable Template (render client-side with contact data) ──────
     const handleSelectAirtableTemplate = useCallback((template: Template) => {
         if (!selectedContact) return;
@@ -1883,6 +1919,7 @@ function SalesCRM() {
                 pendingDraft={pendingDraft}
                 onPendingDraftConsumed={() => setPendingDraft(null)}
                 onReopenConversation={handleReopenConversation}
+                onAnalyzeConversation={handleAnalyzeWAConversation}
                 conversationActive={conversationWindowActive}
                 windowStatusLoading={windowStatusLoading}
                 conversationResponse={conversationResponse}

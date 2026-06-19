@@ -31,6 +31,7 @@ interface ChatPanelProps {
     conversationResponse?: ApiConversationResponse | null;
     summaryLoading?: boolean;
     summaryError?: string | null;
+    onAnalyzeConversation?: () => Promise<void>;
 }
 
 interface DateGroup {
@@ -99,8 +100,23 @@ export function ChatPanel({
     conversationResponse = null,
     summaryLoading = false,
     summaryError = null,
+    onAnalyzeConversation,
 }: ChatPanelProps) {
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    // ── Galea AI analysis ──────────────────────────────────────────────────
+    const [analyzing, setAnalyzing] = useState(false);
+    const handleAnalyze = useCallback(async () => {
+        if (!onAnalyzeConversation || analyzing) return;
+        setAnalyzing(true);
+        try {
+            await onAnalyzeConversation();
+        } catch {
+            // parent handles errors
+        } finally {
+            setAnalyzing(false);
+        }
+    }, [onAnalyzeConversation, analyzing]);
 
     // ── 24h conversation window ─────────────────────────────────────────────
     const isWindowActive = conversationActive ?? true;
@@ -315,6 +331,16 @@ export function ChatPanel({
                     <IconButton icon="🔍" label="Buscar" size="sm" />
                     {onOpenNotes && <IconButton icon="📝" label="Notas" size="sm" onClick={onOpenNotes} />}
                     {onOpenDetail && <IconButton icon="ℹ️" label="Detalle" size="sm" onClick={onOpenDetail} />}
+                    {onAnalyzeConversation && (
+                        <button
+                            onClick={handleAnalyze}
+                            disabled={analyzing}
+                            title="Analizar conversación con Galea"
+                            className="w-7 h-7 flex items-center justify-center text-violet-600 hover:bg-violet-50 disabled:opacity-40 rounded-lg transition-colors"
+                        >
+                            {analyzing ? <Spinner size="sm" /> : <RobotIcon />}
+                        </button>
+                    )}
                     <IconButton icon="⋮" label="Más" size="sm" />
                 </div>
             </header>

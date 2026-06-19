@@ -421,7 +421,7 @@ export function DetailPanel({
                         onSelectContact={onSelectContact}
                     />
                 ) : (
-                    <EmailPanel contactEmail={contact.email} />
+                    <EmailPanel contactEmail={contact.email} contactId={contact.id} contactName={contact.displayName} />
                 )}
             </div>
         </div>

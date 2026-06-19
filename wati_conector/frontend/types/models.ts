@@ -16,6 +16,9 @@ export type MessageStatus =
 
 export type ReadStatus = 'unread' | 'read';
 
+
+
+
 export type ConversationFilter = 'all' | 'leads' | 'contacts' | 'opportunities' | 'open' | 'unread';
 
 export interface Contact {
@@ -234,7 +237,7 @@ export interface EmailMessage {
 
 // ─── Email Conversation hierarchy (n8n structured response) ─────────────────
 
-export interface ConversationMessage {
+/* export interface ConversationMessage {
     id: string;
     conversationId: string;
     hasAttachments: boolean;
@@ -243,6 +246,32 @@ export interface ConversationMessage {
     receivedDateTime: string;
     direction: string;
     status?: 'sending' | 'sent' | 'failed';
+} */
+
+// ─── Email Attachments (structured) ─────────────────────────────────────────
+export interface EmailAttachment {
+    id: string;
+    name: string;
+    contentType: string;
+    size: number;          // bytes
+    downloadUrl: string;   // proxy n8n — never exposes OAuth token
+}
+
+// Reemplaza ConversationMessage existente:
+export interface ConversationMessage {
+    id: string;
+    conversationId: string;
+    from: { name: string; email: string };
+    receivedDateTime: string;
+    direction: string;
+    status?: 'sending' | 'sent' | 'failed';
+    // ── Nuevo ──
+    body_html: string;        // cuerpo limpio en HTML
+    body_text: string;        // fallback texto plano limpio
+    attachments: EmailAttachment[];
+    // ── Backward compat ──
+    body?: string;            // deprecated — remover en v2
+    hasAttachments?: boolean;
 }
 
 export interface Conversation {

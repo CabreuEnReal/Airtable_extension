@@ -39,6 +39,7 @@ interface OpportunityDetailViewBProps {
     pendingDraft?: string | null;
     onPendingDraftConsumed?: () => void;
     onReopenConversation?: () => Promise<{ success: boolean; error?: string }>;
+    onAnalyzeConversation?: () => Promise<void>;
     conversationActive?: boolean;
     windowStatusLoading?: boolean;
     conversationResponse?: ApiConversationResponse | null;
@@ -83,6 +84,7 @@ export function OpportunityDetailViewB({
     pendingDraft,
     onPendingDraftConsumed,
     onReopenConversation,
+    onAnalyzeConversation,
     conversationActive,
     windowStatusLoading,
     conversationResponse,
@@ -240,6 +242,7 @@ export function OpportunityDetailViewB({
                             pendingDraft={pendingDraft}
                             onPendingDraftConsumed={onPendingDraftConsumed}
                             onReopenConversation={onReopenConversation}
+                            onAnalyzeConversation={onAnalyzeConversation}
                             conversationActive={conversationActive}
                             windowStatusLoading={windowStatusLoading}
                             conversationResponse={conversationResponse}
@@ -256,7 +259,7 @@ export function OpportunityDetailViewB({
                         </div>
                     )
                 ) : (
-                    <EmailPanel contactEmail={contact.email} />
+                    <EmailPanel contactEmail={contact.email} contactId={contact.id} contactName={contact.displayName} />
                 )}
             </main>
 
