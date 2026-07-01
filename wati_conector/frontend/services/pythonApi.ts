@@ -90,12 +90,12 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
                     throw new Error(errorJson.message);
                 }
             } catch (parseErr: any) {
-                // If we re-threw a user-friendly error, propagate it
-                if (parseErr.message && !parseErr.message.startsWith('JSON')) {
+                // Only re-throw if it's a user-friendly error we threw above, not a JSON parse error
+                if (!(parseErr instanceof SyntaxError) && parseErr.message) {
                     throw parseErr;
                 }
             }
-            throw new Error(`API ${res.status}: ${errorText}`);
+            throw new Error(`API ${res.status}: ${errorText.slice(0, 200)}`);
         }
 
         // Check if response is HTML (error page) instead of JSON
@@ -378,6 +378,7 @@ export async function sendMediaMessage(
     phoneNumber: string,
     file: File,
     caption?: string,
+    fromPhoneNumberId?: string | null,
 ): Promise<ApiSendMessageResponse> {
     console.log('sendMediaMessage starting:', {
         phoneNumber,
@@ -423,6 +424,7 @@ export async function sendMediaMessage(
             caption: caption || undefined,
             filename: upload.filename || file.name,
             voice: upload.is_voice || false, // Backend decides if it's voice note
+            ...(fromPhoneNumberId ? { from_phone_number_id: fromPhoneNumberId } : {}),
         };
 
         console.log('📦 Payload para Meta API:', {
@@ -432,6 +434,7 @@ export async function sendMediaMessage(
             caption: body.caption,
             filename: body.filename,
             voice: body.voice,
+            from_phone_number_id: body.from_phone_number_id ?? 'not set',
             backendProcessed: upload.is_voice ? 'Voice Note (OGG+OPUS)' : 'Audio Normal'
         });
 

@@ -26,6 +26,7 @@ interface ChatPanelProps {
     pendingDraft?: string | null;
     onPendingDraftConsumed?: () => void;
     onReopenConversation?: () => Promise<{ success: boolean; error?: string }>;
+    onMediaError?: (error: string) => void;
     conversationActive?: boolean;
     windowStatusLoading?: boolean;
     conversationResponse?: ApiConversationResponse | null;
@@ -95,6 +96,7 @@ export function ChatPanel({
     pendingDraft,
     onPendingDraftConsumed,
     onReopenConversation,
+    onMediaError,
     conversationActive,
     windowStatusLoading = false,
     conversationResponse = null,
@@ -451,6 +453,7 @@ export function ChatPanel({
                     onSendMedia={onSendMedia}
                     onSendMetaTemplate={onSendMetaTemplate}
                     onSelectAirtableTemplate={onSelectAirtableTemplate}
+                    onMediaError={onMediaError}
                     templates={templates}
                     sending={sending}
                     disabled={!contact.phone}

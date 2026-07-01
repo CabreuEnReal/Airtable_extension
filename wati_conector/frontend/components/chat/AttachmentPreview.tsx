@@ -19,8 +19,9 @@ export function AttachmentPreview({ attachment, maxWidth = 300, onPreview }: Att
     const mediaType = getMediaType(attachment.mimeType);
 
     // Build resolved URL once (hook must be called unconditionally)
+    // blob: and http(s): URLs are already absolute — only relative paths (/api/...) need the baseUrl prefix.
     const resolvedUrl = attachment.url
-        ? (attachment.url.startsWith('http')
+        ? (attachment.url.startsWith('http') || attachment.url.startsWith('blob:')
             ? attachment.url
             : `${(PYTHON_API as any).BASE_URL || PYTHON_API.BASE_URL}${attachment.url}`)
         : '';

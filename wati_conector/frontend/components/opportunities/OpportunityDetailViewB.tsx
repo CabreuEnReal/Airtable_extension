@@ -1,9 +1,12 @@
-import { useState, type ReactNode } from 'react';
-import type { Contact, ActiveChannel, Interaction, Message, Template } from '../../types/models';
+import { useState, useMemo, type ReactNode } from 'react';
+import type { Contact, ActiveChannel, Interaction, Message, Attachment, Template } from '../../types/models';
 import type { ApiConversationResponse } from '../../types/api';
+import { getMediaType, isImage } from '../../types/models';
+import { formatFileSize } from '../../utils/fileUtils';
 import { Avatar } from '../common/Avatar';
 import { EmptyState } from '../common/EmptyState';
 import { InteractionList, InteractionDetailModal } from './InteractionList';
+import { AttachmentPreview } from '../chat/AttachmentPreview';
 import { ChatPanel } from '../chat/ChatPanel';
 import { EmailPanel } from '../email/EmailPanel';
 
@@ -33,6 +36,7 @@ interface OpportunityDetailViewBProps {
     templates?: Template[];
     onSend?: (text: string) => void;
     onSendMedia?: (file: File) => void;
+    onMediaError?: (error: string) => void;
     onSendMetaTemplate?: (template: Template, parameters: string[]) => void;
     onSelectAirtableTemplate?: (template: Template) => void;
     onRetryMedia?: (messageId: string) => Promise<void>;
@@ -62,6 +66,60 @@ function ColumnTitle({ children, action }: { children: ReactNode; action?: React
 const DASHED_BTN =
     'w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border-[1.5px] border-dashed border-gray-200 text-xs font-semibold text-gray-400 hover:border-primary hover:text-primary hover:bg-green-light3/50 transition-colors';
 
+function FileRow({
+    attachment,
+    direction,
+    timestamp,
+    onPreview,
+}: {
+    attachment: Attachment;
+    direction: 'inbound' | 'outbound';
+    timestamp: string;
+    onPreview: () => void;
+}) {
+    const isImg = isImage(attachment.mimeType);
+    const dateStr = (() => {
+        try { return new Date(timestamp).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }); }
+        catch { return ''; }
+    })();
+
+    return (
+        <button
+            onClick={onPreview}
+            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 text-left transition-colors"
+        >
+            {/* Icon / thumbnail placeholder */}
+            <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center overflow-hidden">
+                {isImg ? (
+                    <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                ) : (
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                )}
+            </div>
+            <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium text-gray-800 truncate">
+                    {decodeURIComponent(attachment.name)}
+                </div>
+                <div className="flex items-center gap-1 mt-0.5">
+                    <span className="text-[10px] text-gray-400">{formatFileSize(attachment.size)}</span>
+                    <span className="text-[10px] text-gray-300">·</span>
+                    <span className={`text-[10px] font-medium ${direction === 'outbound' ? 'text-primary' : 'text-gray-400'}`}>
+                        {direction === 'outbound' ? 'Enviado' : 'Recibido'}
+                    </span>
+                    {dateStr && <><span className="text-[10px] text-gray-300">·</span><span className="text-[10px] text-gray-400">{dateStr}</span></>}
+                </div>
+            </div>
+            <svg className="flex-shrink-0 w-3 h-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+        </button>
+    );
+}
+
 export function OpportunityDetailViewB({
     opportunity: opp,
     contact,
@@ -79,6 +137,7 @@ export function OpportunityDetailViewB({
     templates,
     onSend,
     onSendMedia,
+    onMediaError,
     onSendMetaTemplate,
     onSelectAirtableTemplate,
     onRetryMedia,
@@ -107,6 +166,8 @@ export function OpportunityDetailViewB({
         summaryError,
     });
     const [galeaModalInteraction, setGaleaModalInteraction] = useState<Interaction | null>(null);
+    const [fileSearch, setFileSearch] = useState('');
+    const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
     const galeaText = opp.companyDescription || opp.linkedInSummary || '';
     // Filter to the active contact only — each contact has independent notes/history.
     const contactInteractions = interactions.filter(
@@ -115,6 +176,32 @@ export function OpportunityDetailViewB({
     const latestGaleaInteraction = [...contactInteractions]
         .sort((a, b) => (b.dateExecuted || '').localeCompare(a.dateExecuted || ''))
         .find((it) => it.aiNotes);
+
+    // Collect all image/document attachments from chat messages (both sent & received).
+    // Voice notes excluded (isVoice or audio mimeType without image/document).
+    const chatAttachments = useMemo(() => {
+        const seen = new Set<string>();
+        const result: Array<{ attachment: Attachment; direction: 'inbound' | 'outbound'; timestamp: string }> = [];
+        for (const msg of messages) {
+            for (const att of msg.attachments) {
+                if (att.isVoice) continue;
+                const mt = getMediaType(att.mimeType);
+                if (mt === 'audio') continue; // skip non-voice audio too
+                if (seen.has(att.id)) continue;
+                seen.add(att.id);
+                result.push({ attachment: att, direction: msg.direction as 'inbound' | 'outbound', timestamp: msg.timestamp });
+            }
+        }
+        return result.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    }, [messages]);
+
+    const filteredAttachments = useMemo(() => {
+        if (!fileSearch.trim()) return chatAttachments;
+        const q = fileSearch.toLowerCase();
+        return chatAttachments.filter(({ attachment }) =>
+            decodeURIComponent(attachment.name).toLowerCase().includes(q)
+        );
+    }, [chatAttachments, fileSearch]);
 
     return (
         <div className="flex flex-1 overflow-hidden">
@@ -274,6 +361,7 @@ export function OpportunityDetailViewB({
                             pendingDraft={pendingDraft}
                             onPendingDraftConsumed={onPendingDraftConsumed}
                             onReopenConversation={onReopenConversation}
+                            onMediaError={onMediaError}
                             onAnalyzeConversation={onAnalyzeConversation}
                             conversationActive={conversationActive}
                             windowStatusLoading={windowStatusLoading}
@@ -298,7 +386,9 @@ export function OpportunityDetailViewB({
             {/* ── RIGHT: files + notes (270px) ── */}
             <aside className="w-[270px] flex-shrink-0 border-l border-gray-100 flex flex-col overflow-hidden bg-white">
                 {/* Files */}
-                <ColumnTitle>Archivos relacionados</ColumnTitle>
+                <ColumnTitle>
+                    {`Archivos relacionados${chatAttachments.length > 0 ? ` (${chatAttachments.length})` : ''}`}
+                </ColumnTitle>
                 <div className="px-3 py-2.5 border-b border-gray-100 flex-shrink-0">
                     <div className="relative">
                         <svg
@@ -309,14 +399,54 @@ export function OpportunityDetailViewB({
                             <line x1="21" y1="21" x2="16.65" y2="16.65" />
                         </svg>
                         <input
+                            value={fileSearch}
+                            onChange={(e) => setFileSearch(e.target.value)}
                             className="w-full pl-8 pr-2.5 py-1.5 border-[1.5px] border-gray-100 rounded-lg text-xs bg-surface-light outline-none focus:border-primary focus:bg-white"
                             placeholder="Buscar archivo..."
                         />
                     </div>
                 </div>
                 <div className="max-h-[40%] overflow-y-auto">
-                    <EmptyState icon="📎" title="Sin archivos" description="Los archivos adjuntos aparecerán aquí." />
+                    {filteredAttachments.length === 0 ? (
+                        <EmptyState icon="📎" title="Sin archivos" description="Los archivos del chat aparecerán aquí." />
+                    ) : (
+                        <div className="divide-y divide-gray-50">
+                            {filteredAttachments.map(({ attachment, direction, timestamp }) => (
+                                <FileRow
+                                    key={attachment.id}
+                                    attachment={attachment}
+                                    direction={direction}
+                                    timestamp={timestamp}
+                                    onPreview={() => setPreviewAttachment(attachment)}
+                                />
+                            ))}
+                        </div>
+                    )}
                 </div>
+                {previewAttachment && (
+                    <div
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+                        onClick={() => setPreviewAttachment(null)}
+                    >
+                        <div
+                            className="bg-white rounded-xl shadow-2xl p-4 max-w-md w-full mx-4"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="flex items-center justify-between mb-3">
+                                <span className="text-sm font-semibold text-gray-800 truncate pr-2">
+                                    {decodeURIComponent(previewAttachment.name)}
+                                </span>
+                                <button
+                                    onClick={() => setPreviewAttachment(null)}
+                                    className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                            <AttachmentPreview attachment={previewAttachment} maxWidth={380} />
+                        </div>
+                    </div>
+                )}
 
                 {/* Notes */}
                 <ColumnTitle>Notas</ColumnTitle>

@@ -1652,7 +1652,8 @@ function SalesCRM() {
 
     // ─── Send Media Message ───────────────────────────────────────
     const handleSendMedia = useCallback(async (file: File) => {
-        if (!selectedContact || sending || !apiOnline) return;
+        if (!selectedContact || sending) return;
+        if (!apiOnline) { notify('error', 'API no disponible. Verifica la conexión al servidor.'); return; }
         setSending(true);
         addLog(`Sending media to ${selectedContact.phone}: ${file.name} (${formatFileSize(file.size)})`);
 
@@ -1708,6 +1709,8 @@ function SalesCRM() {
             const result = await sendMediaMessage(
                 normalizePhone(selectedContact.phone),
                 file,
+                undefined,
+                selectedPhoneNumber ? String(selectedPhoneNumber) : undefined,
             );
             addLog(`Media sent OK: id=${result.id}, meta_id=${result.meta_message_id}`);
 
@@ -1967,6 +1970,7 @@ function SalesCRM() {
                 templates={templates}
                 onSend={handleSend}
                 onSendMedia={handleSendMedia}
+                onMediaError={(err) => notify('error', err)}
                 onSendMetaTemplate={handleSendMetaTemplate}
                 onSelectAirtableTemplate={handleSelectAirtableTemplate}
                 onRetryMedia={handleRetryMedia}

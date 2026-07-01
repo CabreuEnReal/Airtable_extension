@@ -11,6 +11,7 @@ interface ChatInputProps {
     onSendMedia?: (file: File) => void;
     onSendMetaTemplate?: (template: Template, parameters: string[]) => void;
     onSelectAirtableTemplate?: (template: Template) => void;
+    onMediaError?: (error: string) => void;
     templates?: Template[];
     sending: boolean;
     disabled?: boolean;
@@ -19,7 +20,7 @@ interface ChatInputProps {
     contact?: { displayName: string } | null;
 }
 
-export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAirtableTemplate, templates = [], sending, disabled = false, pendingDraft, onPendingDraftConsumed, contact }: ChatInputProps) {
+export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAirtableTemplate, onMediaError, templates = [], sending, disabled = false, pendingDraft, onPendingDraftConsumed, contact }: ChatInputProps) {
     const [draft, setDraft] = useState('');
     const [showTemplates, setShowTemplates] = useState(false);
     const [showEmojis, setShowEmojis] = useState(false);
@@ -240,8 +241,9 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
                         </svg>
                     </button>
                     {/* File upload button */}
-                    <FileUploadButton 
-                        onFileSelect={handleFileSelect} 
+                    <FileUploadButton
+                        onFileSelect={handleFileSelect}
+                        onValidationError={onMediaError}
                         disabled={sending || disabled}
                     />
                     {/* Voice recorder button */}

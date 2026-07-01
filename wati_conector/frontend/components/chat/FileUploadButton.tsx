@@ -3,13 +3,15 @@ import { validateFile } from '../../utils/fileUtils';
 
 interface FileUploadButtonProps {
     onFileSelect: (file: File) => void;
+    onValidationError?: (error: string) => void;
     disabled?: boolean;
     accept?: string;
 }
 
-export function FileUploadButton({ 
-    onFileSelect, 
-    disabled = false, 
+export function FileUploadButton({
+    onFileSelect,
+    onValidationError,
+    disabled = false,
     accept = "image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,video/mp4,audio/*"
 }: FileUploadButtonProps) {
     const [isDragging, setIsDragging] = useState(false);
@@ -18,7 +20,7 @@ export function FileUploadButton({
     const handleFileSelect = (file: File) => {
         const validation = validateFile(file);
         if (!validation.valid) {
-            alert(validation.error);
+            if (onValidationError) onValidationError(validation.error || 'Archivo no válido');
             return;
         }
         onFileSelect(file);

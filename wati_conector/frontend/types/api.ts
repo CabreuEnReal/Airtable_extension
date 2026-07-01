@@ -112,6 +112,7 @@ export interface ApiSendMediaRequest {
     caption?: string;
     filename?: string;
     voice?: boolean;
+    from_phone_number_id?: string;
 }
 
 export interface ApiRenderTemplateRequest {
