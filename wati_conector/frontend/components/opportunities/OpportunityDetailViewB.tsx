@@ -30,6 +30,8 @@ interface OpportunityDetailViewBProps {
     /** Interaction history for this opportunity (drives Notas + Historial). */
     interactions?: Interaction[];
     onInteractionCreated?: (it: Interaction) => void;
+    /** Resolved Airtable People record ID for the current user (used by Galea). */
+    myPeopleId?: string | null;
 
     // ── ChatPanel props ──────────────────────────────────────────────────────
     messages?: Message[];
@@ -133,6 +135,7 @@ export function OpportunityDetailViewB({
     onAddNote,
     interactions = [],
     onInteractionCreated,
+    myPeopleId,
     messages = [],
     templates,
     onSend,
@@ -379,7 +382,7 @@ export function OpportunityDetailViewB({
                         </div>
                     )
                 ) : (
-                    <EmailPanel contactEmail={contact.email} contactId={contact.id} contactName={contact.displayName} opportunityId={opp.id} onInteractionCreated={onInteractionCreated} />
+                    <EmailPanel contactEmail={contact.email} contactId={contact.id} contactName={contact.displayName} opportunityId={opp.id} myPeopleId={myPeopleId} onInteractionCreated={onInteractionCreated} />
                 )}
             </main>
 

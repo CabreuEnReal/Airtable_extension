@@ -10,7 +10,7 @@ import type { Contact, Message, Template, Interaction, InteractionType, Notifica
 import type { WhatsAppNumber, NumberStats, InboxStatus, MessageWithNumber } from './types/whatsapp';
 import type { ApiConversationResponse, ApiMessageOut } from './types/api';
 import { POLLING } from './constants/config';
-import { detectBaseId, getAllContacts, getInteractions, getInteractionTypes, createInteraction, createInteractionType, resolvePeopleIdByEmail, getPeopleCellphone } from './services/airtable';
+import { detectBaseId, getAllContacts, getInteractions, getInteractionTypes, createInteraction, resolvePeopleIdByEmail, getPeopleCellphone } from './services/airtable';
 import { resolveOpportunityContacts, deriveChannel } from './adapters/contactAdapter';
 import { OpportunitySearchView } from './components/opportunities/OpportunitySearchView';
 import { OpportunityDetailViewA } from './components/opportunities/OpportunityDetailViewA';
@@ -46,6 +46,7 @@ import {
     getNumberTemplates,
     notifyWindowExpired,
     getConversationMessages,
+    analyzeInteraction,
 } from './services/pythonApi';
 import { adaptMessages, adaptMessagesWithNumber } from './adapters/messageAdapter';
 import { adaptMetaTemplates, adaptAirtableTemplates } from './adapters/templateAdapter';
@@ -1550,81 +1551,95 @@ function SalesCRM() {
 
     // ─── Galea AI: Analyze WhatsApp conversation ─────────────────────────────
     const handleAnalyzeWAConversation = useCallback(async () => {
-        const userId = (session as any)?.currentUser?.id;
-        if (!selectedContact || !userId || chatMessagesToDisplay.length === 0) return;
+        if (!selectedContact || chatMessagesToDisplay.length === 0) return;
 
-        const messages = chatMessagesToDisplay.map((m: Message) => ({
-            from: (m as any).senderName || (m.direction === 'outbound' ? 'Vendedor' : selectedContact.displayName),
-            text: (m as any).text || (m as any).body || '',
-            date: (m as any).timestamp || new Date().toISOString(),
-            direction: m.direction === 'outbound' ? 'outbound' : 'inbound',
-        }));
+        const msgs = chatMessagesToDisplay
+            .filter((m: Message) => ((m as any).text || (m as any).body || '').trim())
+            .map((m: Message) => ({
+                direction: m.direction === 'outbound' ? 'outbound' as const : 'inbound' as const,
+                text: (m as any).text || (m as any).body || '',
+                date: (m as any).timestamp || new Date().toISOString(),
+            }));
+
+        if (msgs.length === 0) {
+            notify('error', 'No hay mensajes con texto para analizar.');
+            return;
+        }
+
+        // Optimistic entry shown while backend/OpenAI call is in flight
+        const tempId = `opt-galea-${Date.now()}`;
+        const optimistic: Interaction = {
+            id: tempId,
+            name: 'Análisis Galea',
+            type: [],
+            dateExecuted: new Date().toISOString(),
+            notes: '',
+            aiNotes: undefined,
+            team: [],
+            accountId: '',
+            contactId: selectedContact.id,
+            opportunityId: selectedOpportunity?.id || '',
+            channel: 'whatsapp',
+            isOptimistic: true,
+        };
+        setInteractions((prev) => [optimistic, ...prev]);
 
         try {
-            const res = await fetch('https://n8n.energiareal.mx/webhook/analyze-conversation', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    channel: 'whatsapp',
-                    airtableUserId: userId,
-                    userEmail: currentUserEmail,
-                    contactId: selectedContact.id,
-                    contactName: selectedContact.displayName,
-                    opportunityId: selectedOpportunity?.id || '',
-                    messages,
-                }),
+            const data = await analyzeInteraction({
+                channel: 'whatsapp',
+                contactId: selectedContact.id,
+                contactName: selectedContact.displayName,
+                userEmail: currentUserEmail || undefined,
+                airtableUserId: myPeopleId || undefined,
+                messages: msgs,
             });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
+
             if (!data.success) throw new Error(data.error || 'Error en el análisis');
 
-            // Crear tipos desconocidos en Airtable si los hay
-            const allTypeIds: string[] = [...(data.typeIds || [])];
-            for (const typeName of (data.unknownTypes || [])) {
-                try {
-                    const newId = await createInteractionType(typeName);
-                    allTypeIds.push(newId);
-                } catch (_) { /* continuar sin el tipo */ }
-            }
+            // Build aiNotes in the canonical multi-line format the UI expects
+            const dateLabel = new Date().toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+            const aiNotes = [
+                `[WhatsApp | ${dateLabel}]`,
+                '',
+                data.resumen,
+                '',
+                `Categorias: ${data.categoria}`,
+                `Siguiente paso: ${data.siguiente_paso}`,
+                `Urgencia: ${data.urgencia}`,
+            ].join('\n');
 
-            // Optimistic entry — visible immediately while Airtable write is in flight
-            const tempId = `opt-galea-${Date.now()}`;
-            const optimistic: Interaction = {
-                id: tempId,
+            // Backend already saved to Airtable — replace optimistic with real record.
+            // Construct the interaction from the response so it's visible immediately,
+            // then a background refresh confirms the real Airtable data.
+            const saved: Interaction = {
+                id: data.airtable_record_id,
                 name: 'Análisis Galea',
-                type: (data.types as string[]) || [],
+                type: [data.categoria],
                 dateExecuted: new Date().toISOString(),
                 notes: '',
-                aiNotes: data.aiNotes,
+                aiNotes,
                 team: [],
                 accountId: '',
                 contactId: selectedContact.id,
                 opportunityId: selectedOpportunity?.id || '',
                 channel: 'whatsapp',
-                isOptimistic: true,
+                isOptimistic: false,
             };
-            setInteractions((prev) => [optimistic, ...prev]);
+            setInteractions((prev) => prev.map((it) => (it.id === tempId ? saved : it)));
 
-            try {
-                const saved = await createInteraction({
-                    notes: '',
-                    typeIds: allTypeIds,
-                    aiNotes: data.aiNotes,
-                    contactId: selectedContact.id,
-                    opportunityId: selectedOpportunity?.id,
-                    participantEmail: currentUserEmail,
-                });
-                setInteractions((prev) => prev.map((it) => (it.id === tempId ? saved : it)));
-            } catch (saveErr: any) {
-                setInteractions((prev) => prev.filter((it) => it.id !== tempId));
-                throw saveErr;
-            }
+            // Async refresh to pull full Airtable record (team, type names, etc.)
+            getInteractions().then(setInteractions).catch(() => {});
 
-            notify('success', `Galea: ${(data.types as string[])?.join(', ') || 'categorizado'}`);
+            notify('success', `Galea: ${data.categoria} · Urgencia ${data.urgencia}`);
         } catch (err: any) {
-            notify('error', `Error en Galea: ${err.message}`);
+            setInteractions((prev) => prev.filter((it) => it.id !== tempId));
+            // 502 means analysis ran but Airtable write failed
+            const msg = err.message?.includes('502')
+                ? 'El análisis se generó pero no se guardó en Airtable. Intenta de nuevo.'
+                : `Error en Galea: ${err.message}`;
+            notify('error', msg);
         }
-    }, [selectedContact, session, currentUserEmail, selectedOpportunity, chatMessagesToDisplay, notify]);
+    }, [selectedContact, currentUserEmail, myPeopleId, selectedOpportunity, chatMessagesToDisplay, notify]);
 
     // ─── Select Airtable Template (render client-side with contact data) ──────
     const handleSelectAirtableTemplate = useCallback((template: Template) => {
@@ -1985,6 +2000,7 @@ function SalesCRM() {
                 summaryLoading={summaryLoading}
                 summaryError={summaryError}
                 onInteractionCreated={(it) => setInteractions((prev) => [it, ...prev])}
+                myPeopleId={myPeopleId}
             />
 
             <ContactModal

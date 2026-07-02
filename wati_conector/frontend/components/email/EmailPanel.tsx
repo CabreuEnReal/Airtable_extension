@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from '@airtable/blocks/interface/ui';
 import type { Conversation, ConversationMessage, EmailAttachment, Notification, Interaction } from '../../types/models';
-import { createInteraction, createInteractionType } from '../../services/airtable';
+import { analyzeInteraction } from '../../services/pythonApi';
 import { Avatar } from '../common/Avatar';
 import { EmptyState } from '../common/EmptyState';
 import { Spinner } from '../common/Spinner';
@@ -12,6 +12,7 @@ interface EmailPanelProps {
     contactId?: string;
     contactName?: string;
     opportunityId?: string;
+    myPeopleId?: string | null;
     onInteractionCreated?: (it: Interaction) => void;
 }
 
@@ -19,7 +20,6 @@ const N8N_BASE = 'https://n8n.energiareal.mx';
 const N8N_LOGIN_URL = `${N8N_BASE}/webhook/oauth/login`;
 const N8N_GET_EMAILS_URL = `${N8N_BASE}/webhook/get-emails`;
 const N8N_SEND_EMAIL_URL = `${N8N_BASE}/webhook/send-email`;
-const N8N_ANALYZE_URL = `${N8N_BASE}/webhook/analyze-conversation`;
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -552,7 +552,7 @@ function ThreadView({
 
 // ─── Main EmailPanel ──────────────────────────────────────────────────────────
 
-export function EmailPanel({ contactEmail, contactId, contactName, opportunityId, onInteractionCreated }: EmailPanelProps) {
+export function EmailPanel({ contactEmail, contactId, contactName, opportunityId, myPeopleId, onInteractionCreated }: EmailPanelProps) {
     const session = useSession();
     const airtableUserId = (session as any)?.currentUser?.id;
     const userEmail = (session as any)?.currentUser?.email ?? '';
@@ -812,66 +812,72 @@ export function EmailPanel({ contactEmail, contactId, contactName, opportunityId
     // ─── Galea AI analysis ───────────────────────────────────────────────────
 
     const handleAnalyzeWithGalea = async () => {
-        if (!selectedConversation || isAnalyzing || !contactId || !airtableUserId) return;
+        if (!selectedConversation || isAnalyzing || !contactId) return;
         setIsAnalyzing(true);
         try {
-            const messages = selectedConversation.messages.map(msg => ({
-                from: msg.from.name,
-                text: msg.body_text || msg.body || '',
-                date: msg.receivedDateTime,
-                direction: (msg.direction === 'sent' || msg.from.email !== contactEmail) ? 'outbound' : 'inbound',
-            }));
+            const msgs = selectedConversation.messages
+                .filter(msg => (msg.body_text || msg.body || '').trim())
+                .map(msg => ({
+                    direction: (msg.direction === 'sent' || msg.from.email !== contactEmail)
+                        ? 'outbound' as const
+                        : 'inbound' as const,
+                    text: msg.body_text || msg.body || '',
+                    date: msg.receivedDateTime,
+                }));
 
-            const res = await fetch(N8N_ANALYZE_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    channel: 'email',
-                    airtableUserId,
-                    userEmail,
-                    contactId,
-                    contactName: contactName || contactEmail || 'Contacto',
-                    opportunityId: opportunityId || '',
-                    messages,
-                    subject: selectedConversation.subject,
-                }),
+            if (msgs.length === 0) throw new Error('No hay mensajes con texto para analizar.');
+
+            const data = await analyzeInteraction({
+                channel: 'email',
+                contactId,
+                contactName: contactName || contactEmail || 'Contacto',
+                userEmail: userEmail || undefined,
+                airtableUserId: myPeopleId || undefined,
+                subject: selectedConversation.subject,
+                messages: msgs,
             });
 
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
             if (!data.success) throw new Error(data.error || 'Error en el análisis');
 
-            // Crear tipos desconocidos en Airtable si los hay
-            const allTypeIds: string[] = [...(data.typeIds || [])];
-            for (const typeName of (data.unknownTypes || [])) {
-                try {
-                    const newId = await createInteractionType(typeName);
-                    allTypeIds.push(newId);
-                } catch (_) { /* continuar sin el tipo */ }
-            }
+            // Build aiNotes in canonical multi-line format
+            const dateLabel = new Date().toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+            const aiNotes = [
+                `[Correo | ${dateLabel}]`,
+                '',
+                data.resumen,
+                '',
+                `Categorias: ${data.categoria}`,
+                `Siguiente paso: ${data.siguiente_paso}`,
+                `Urgencia: ${data.urgencia}`,
+            ].join('\n');
 
-            // Guardar en Interaction History usando el SDK
-            const saved = await createInteraction({
+            // Backend already wrote to Airtable — construct Interaction from response
+            const saved: Interaction = {
+                id: data.airtable_record_id,
+                name: 'Análisis Galea',
+                type: [data.categoria],
+                dateExecuted: new Date().toISOString(),
                 notes: '',
-                typeIds: allTypeIds,
-                aiNotes: data.aiNotes,
+                aiNotes,
+                team: [],
+                accountId: '',
                 contactId,
-                opportunityId,
-                participantEmail: userEmail,
-            });
+                opportunityId: opportunityId || '',
+                channel: 'correo',
+                isOptimistic: false,
+            };
             onInteractionCreated?.(saved);
 
             setNotification({
                 id: Date.now().toString(),
                 type: 'success',
-                text: `Galea: ${(data.types as string[] | undefined)?.join(', ') || 'categorizado'}`,
+                text: `Galea: ${data.categoria} · Urgencia ${data.urgencia}`,
             });
         } catch (err: any) {
-            setNotification({
-                id: Date.now().toString(),
-                type: 'error',
-                text: `Error en Galea: ${err.message}`,
-            });
+            const msg = err.message?.includes('502')
+                ? 'El análisis se generó pero no se guardó en Airtable. Intenta de nuevo.'
+                : `Error en Galea: ${err.message}`;
+            setNotification({ id: Date.now().toString(), type: 'error', text: msg });
         } finally {
             setIsAnalyzing(false);
         }

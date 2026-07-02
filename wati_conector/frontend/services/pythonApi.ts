@@ -41,7 +41,7 @@ const cleanExpiredCache = () => {
 // Clean cache every 10 seconds
 setInterval(cleanExpiredCache, 10000);
 
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function apiFetch<T>(path: string, options: RequestInit = {}, timeoutMs = 10000): Promise<T> {
     const baseUrl = (PYTHON_API as any).BASE_URL || PYTHON_API.BASE_URL;
     const url = `${baseUrl}${path}`;
     const method = options.method || 'GET';
@@ -58,7 +58,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
         const res = await fetch(url, {
@@ -116,7 +116,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     } catch (err: any) {
         clearTimeout(timeoutId);
         if (err.name === 'AbortError') {
-            throw new Error(`Request timeout after 10s: ${url}`);
+            throw new Error(`Request timeout after ${timeoutMs / 1000}s: ${url}`);
         }
         throw err;
     }
@@ -638,5 +638,39 @@ export async function notifyWindowExpired(whatsappNumberId: number, contactId: n
 export async function getConversationMessages(conversationId: string): Promise<import('../types/api').ApiConversationResponse> {
     return apiFetch<import('../types/api').ApiConversationResponse>(
         `/api/conversations/${encodeURIComponent(conversationId)}/messages`
+    );
+}
+
+// ─── Galea AI — native backend analyze ────────────────────────────────────────
+
+export interface AnalyzeInteractionRequest {
+    channel: 'whatsapp' | 'email';
+    contactId: string;
+    contactName?: string;
+    userEmail?: string;
+    airtableUserId?: string;
+    subject?: string;
+    messages: Array<{ direction: 'inbound' | 'outbound'; text: string; date?: string }>;
+}
+
+export interface AnalyzeInteractionResponse {
+    success: boolean;
+    channel: string;
+    categoria: string;
+    resumen: string;
+    siguiente_paso: string;
+    urgencia: 'Alta' | 'Media' | 'Baja';
+    airtable_record_id: string;
+    team_participant_resolved?: boolean;
+    error?: string;
+}
+
+export async function analyzeInteraction(
+    payload: AnalyzeInteractionRequest,
+): Promise<AnalyzeInteractionResponse> {
+    return apiFetch<AnalyzeInteractionResponse>(
+        '/api/interactions/analyze',
+        { method: 'POST', body: JSON.stringify(payload) },
+        30000, // 3-10s for OpenAI call; 30s safety margin
     );
 }
