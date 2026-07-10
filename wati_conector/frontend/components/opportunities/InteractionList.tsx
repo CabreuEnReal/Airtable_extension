@@ -23,6 +23,38 @@ function ChannelBadge({ channel }: { channel?: ActiveChannel }) {
     );
 }
 
+function parseAiNoteField(aiNotes: string, field: string): string | null {
+    const m = aiNotes.match(new RegExp(`^${field}:\\s*(.+)$`, 'm'));
+    return m ? m[1].trim() : null;
+}
+
+function ResultadoBadge({ value }: { value: string }) {
+    const cfg: Record<string, string> = {
+        'Avanza': 'bg-green-100 text-green-700',
+        'En Espera': 'bg-yellow-100 text-yellow-700',
+        'Objeción': 'bg-orange-100 text-orange-700',
+        'Sin respuesta': 'bg-gray-100 text-gray-500',
+    };
+    const cls = cfg[value] ?? 'bg-gray-100 text-gray-500';
+    return (
+        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${cls}`}>
+            {value}
+        </span>
+    );
+}
+
+function DirectionBadge({ value }: { value: string }) {
+    const cls =
+        value === 'Inbound'
+            ? 'bg-blue-100 text-blue-700'
+            : 'bg-emerald-100 text-emerald-700';
+    return (
+        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${cls}`}>
+            {value}
+        </span>
+    );
+}
+
 function formatDate(iso: string): string {
     if (!iso) return '';
     const d = new Date(iso);
@@ -31,6 +63,8 @@ function formatDate(iso: string): string {
 }
 
 export function InteractionDetailModal({ it, onClose }: { it: Interaction; onClose: () => void }) {
+    const resultado = it.aiNotes ? parseAiNoteField(it.aiNotes, 'Resultado') : null;
+    const direction = it.aiNotes ? parseAiNoteField(it.aiNotes, 'Direction') : null;
     return (
         <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
@@ -49,6 +83,8 @@ export function InteractionDetailModal({ it, onClose }: { it: Interaction; onClo
                                 {t}
                             </span>
                         ))}
+                        {resultado && <ResultadoBadge value={resultado} />}
+                        {direction && <DirectionBadge value={direction} />}
                         <span className="text-xs text-gray-400">{formatDate(it.dateExecuted)}</span>
                     </div>
                     <button
@@ -90,6 +126,7 @@ function InteractionCard({ it, onOpen }: { it: Interaction; onOpen: () => void }
     const preview = it.aiNotes
         ? it.aiNotes.split('\n').filter((l) => l.trim()).slice(1).join(' ') || it.aiNotes
         : it.notes || it.name || '—';
+    const resultado = it.aiNotes ? parseAiNoteField(it.aiNotes, 'Resultado') : null;
 
     return (
         <button
@@ -103,6 +140,7 @@ function InteractionCard({ it, onOpen }: { it: Interaction; onOpen: () => void }
                         Galea
                     </span>
                 )}
+                {resultado && <ResultadoBadge value={resultado} />}
                 <span className="text-[11px] text-gray-400">{formatDate(it.dateExecuted)}</span>
                 <svg className="ml-auto opacity-30" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <polyline points="9 18 15 12 9 6" />

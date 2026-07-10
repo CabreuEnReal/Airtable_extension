@@ -1591,6 +1591,7 @@ function SalesCRM() {
                 contactName: selectedContact.displayName,
                 userEmail: currentUserEmail || undefined,
                 airtableUserId: myPeopleId || undefined,
+                opportunityId: selectedOpportunity?.id || undefined,
                 messages: msgs,
             });
 
@@ -1606,6 +1607,8 @@ function SalesCRM() {
                 `Categorias: ${data.categoria}`,
                 `Siguiente paso: ${data.siguiente_paso}`,
                 `Urgencia: ${data.urgencia}`,
+                `Resultado: ${data.resultado}`,
+                `Direction: ${data.direction}`,
             ].join('\n');
 
             // Backend already saved to Airtable — replace optimistic with real record.

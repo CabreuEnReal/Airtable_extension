@@ -649,6 +649,7 @@ export interface AnalyzeInteractionRequest {
     contactName?: string;
     userEmail?: string;
     airtableUserId?: string;
+    opportunityId?: string;
     subject?: string;
     messages: Array<{ direction: 'inbound' | 'outbound'; text: string; date?: string }>;
 }
@@ -660,6 +661,8 @@ export interface AnalyzeInteractionResponse {
     resumen: string;
     siguiente_paso: string;
     urgencia: 'Alta' | 'Media' | 'Baja';
+    resultado: string;   // "Avanza" | "En Espera" | "Objeción" | "Sin respuesta"
+    direction: string;   // "Inbound" | "Outbound"
     airtable_record_id: string;
     team_participant_resolved?: boolean;
     error?: string;

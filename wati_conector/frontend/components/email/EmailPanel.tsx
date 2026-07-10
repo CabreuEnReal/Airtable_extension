@@ -833,6 +833,7 @@ export function EmailPanel({ contactEmail, contactId, contactName, opportunityId
                 contactName: contactName || contactEmail || 'Contacto',
                 userEmail: userEmail || undefined,
                 airtableUserId: myPeopleId || undefined,
+                opportunityId: opportunityId || undefined,
                 subject: selectedConversation.subject,
                 messages: msgs,
             });
@@ -849,6 +850,8 @@ export function EmailPanel({ contactEmail, contactId, contactName, opportunityId
                 `Categorias: ${data.categoria}`,
                 `Siguiente paso: ${data.siguiente_paso}`,
                 `Urgencia: ${data.urgencia}`,
+                `Resultado: ${data.resultado}`,
+                `Direction: ${data.direction}`,
             ].join('\n');
 
             // Backend already wrote to Airtable — construct Interaction from response
@@ -871,7 +874,7 @@ export function EmailPanel({ contactEmail, contactId, contactName, opportunityId
             setNotification({
                 id: Date.now().toString(),
                 type: 'success',
-                text: `Galea: ${data.categoria} · Urgencia ${data.urgencia}`,
+                text: `Galea: ${data.categoria} · ${data.resultado} · Urgencia ${data.urgencia}`,
             });
         } catch (err: any) {
             const msg = err.message?.includes('502')
