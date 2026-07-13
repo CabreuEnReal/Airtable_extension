@@ -115,6 +115,8 @@ export const PEOPLE_FIELDS = {
     EMAIL: 'Email',
     CELLPHONE: 'Cellphone',
     CELLPHONE_FORMATTED: 'Cellphone (formatted)',
+    TEAM_SS: 'Team SS',    // multipleSelects — Pendo account.name
+    TEAM_LR: 'Team LR',    // linked record → Teams — Pendo account.id
 } as const;
 
 // ─── Account field constants ────────────────────────────────────────────────

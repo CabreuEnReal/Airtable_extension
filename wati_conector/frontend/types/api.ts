@@ -19,7 +19,9 @@ export interface ApiContactsStatus {
 
 export interface ApiMessageOut {
     id: number;
-    meta_message_id: string;
+    // Opaque id: wamid.* (Meta-era + WATI templates), 24-hex ObjectId (WATI session),
+    // or null (template just sent — backend backfills async in ~1 min)
+    meta_message_id: string | null;
     contact_id: number;
     contact_phone?: string;
     contact_airtable_id?: string;
@@ -43,7 +45,8 @@ export interface ApiSendMessageRequest {
 
 export interface ApiSendMessageResponse {
     id: number;
-    meta_message_id: string;
+    // Opaque id; null for freshly-sent templates (backfilled async by backend)
+    meta_message_id: string | null;
     contact_id: number;
     contact_phone: string;
     from_number: string;
@@ -72,6 +75,8 @@ export interface ApiTemplateOut {
     status?: string;
     components?: unknown[];
     parameter_count?: number;
+    parameter_names?: string[];
+    header_type?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT' | null;
 }
 
 export interface ApiAirtableTemplateOut {
@@ -145,18 +150,27 @@ export interface ApiPhoneNumber {
 export interface ApiNumberTemplate {
     name: string;
     status: string;
+    // WATI format ("en", "es") — may differ from Meta's "es_MX"
     language: string;
     category: string;
     header: string | null;
+    header_type?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT' | null;
     body: string;
     components_count: number;
+    parameter_count?: number;
+    parameter_names?: string[];
+    // false = media header not supported by API — disable in selector
+    sendable_via_api?: boolean;
+    source?: 'wati';
 }
 
 export interface ApiNumberTemplatesResponse {
     whatsapp_number_id: number;
     phone_number: string;
     display_name: string | null;
-    waba_id: string;
+    /** @deprecated replaced by wati_channel_id */
+    waba_id?: string;
+    wati_channel_id?: string;
     status_filter: string;
     total: number;
     templates: ApiNumberTemplate[];

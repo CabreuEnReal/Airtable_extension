@@ -10,7 +10,8 @@ import type { Contact, Message, Template, Interaction, InteractionType, Notifica
 import type { WhatsAppNumber, NumberStats, InboxStatus, MessageWithNumber } from './types/whatsapp';
 import type { ApiConversationResponse, ApiMessageOut } from './types/api';
 import { POLLING } from './constants/config';
-import { detectBaseId, getAllContacts, getInteractions, getInteractionTypes, createInteraction, resolvePeopleIdByEmail, getPeopleCellphone } from './services/airtable';
+import { detectBaseId, getAllContacts, getInteractions, getInteractionTypes, createInteraction, resolvePeopleIdByEmail, getPeopleCellphone, getPeopleTeam } from './services/airtable';
+import { initializePendo, pendoPageLoad } from './services/pendo';
 import { resolveOpportunityContacts, deriveChannel } from './adapters/contactAdapter';
 import { OpportunitySearchView } from './components/opportunities/OpportunitySearchView';
 import { OpportunityDetailViewA } from './components/opportunities/OpportunityDetailViewA';
@@ -761,7 +762,10 @@ function SalesCRM() {
                     updatedAt: '',
                     language: t.language,
                     status: t.status,
-                    parameterCount: (t.body.match(/\{\{\d+\}\}/g) || []).length,
+                    parameterCount: t.parameter_names?.length ?? t.parameter_count ?? (t.body.match(/\{\{\d+\}\}/g) || []).length,
+                    parameterNames: t.parameter_names,
+                    headerType: t.header_type ?? null,
+                    sendableViaApi: t.sendable_via_api ?? true,
                 }));
                 // Keep airtable templates, replace meta ones
                 setTemplates((prev: Template[]) => [
@@ -941,10 +945,10 @@ function SalesCRM() {
         return filtered;
     }, [inboxStats, messagesWithAirtableIds, selectedPhoneNumber]);
 
-    // ─── Sync conversationWindowActive — 24h timestamp rule ──────────────────
-    // Backend's conversation_active flag is unreliable (often returns false for
-    // recent messages). Instead, use the timestamp of the most recent matched message:
-    // if it's within 24h → window open. Backend flag is intentionally ignored.
+    // ─── Sync conversationWindowActive — backend conversation_active flag ────
+    // Backend computes conversation_active server-side (<24h since last inbound).
+    // Primary source: flag on the most recent matched message. Fallback: local
+    // 24h timestamp rule when the flag is absent (older payloads, optimistic rows).
     useEffect(() => {
         const isLocked = conversationActiveLockUntil.current > Date.now();
         const selectedId = selectedContactRef.current?.id;
@@ -971,13 +975,17 @@ function SalesCRM() {
             const mTime = new Date(m.timestamp).getTime();
             return !isNaN(mTime) && mTime > new Date(best.timestamp).getTime() ? m : best;
         });
-        const latestTime = new Date(latest.timestamp).getTime();
-        const horasTranscurridas = (Date.now() - latestTime) / (1000 * 60 * 60);
 
-        // Invalid timestamp → don't close window; wait for valid data
-        if (isNaN(horasTranscurridas)) return;
-
-        const windowOpen = horasTranscurridas < 24;
+        let windowOpen: boolean;
+        if (typeof latest.conversationActive === 'boolean') {
+            windowOpen = latest.conversationActive;
+        } else {
+            const latestTime = new Date(latest.timestamp).getTime();
+            const horasTranscurridas = (Date.now() - latestTime) / (1000 * 60 * 60);
+            // Invalid timestamp → don't close window; wait for valid data
+            if (isNaN(horasTranscurridas)) return;
+            windowOpen = horasTranscurridas < 24;
+        }
         setConversationWindowActive(windowOpen);
         setWindowStatusLoading(false);
         // Real evaluation done — clear the contact-switch lock early so UI is responsive
@@ -1050,6 +1058,41 @@ function SalesCRM() {
             });
         return () => { cancelled = true; };
     }, [currentUserEmail, addLog]);
+
+    // ─── Pendo analytics: initialize once identity is resolved ───────────────
+    // visitor.id = user email (team decision); account = Teams record via People.
+    // No People row / no team → init with visitor only, never block the extension.
+    useEffect(() => {
+        if (isLoadingIdentity || !currentUserEmail) return;
+        const visitorName = (session as any)?.currentUser?.name ?? '';
+
+        if (!myPeopleId) {
+            console.warn('[Pendo] No People record for user — initializing without account');
+            initializePendo({ visitorId: currentUserEmail, visitorName });
+            return;
+        }
+        getPeopleTeam(myPeopleId)
+            .then(({ teamRecordId, teamSS }) => {
+                if (!teamRecordId) {
+                    console.warn('[Pendo] People record has no linked team — initializing without account');
+                }
+                initializePendo({
+                    visitorId: currentUserEmail,
+                    visitorName,
+                    accountId: teamRecordId ?? undefined,
+                    accountName: teamSS ?? undefined,
+                });
+            })
+            .catch((err) => {
+                console.warn('[Pendo] Team resolve failed — initializing without account:', err.message);
+                initializePendo({ visitorId: currentUserEmail, visitorName });
+            });
+    }, [isLoadingIdentity, myPeopleId, currentUserEmail, session]);
+
+    // ─── Pendo: signal internal view changes ─────────────────────────────────
+    useEffect(() => {
+        pendoPageLoad();
+    }, [currentView]);
 
     // ─── WhatsApp number match (Blocker A) ───────────────────────────────────
     // Strip all non-digits for comparison — handles +52, spaces, dashes, parens.
@@ -1461,7 +1504,7 @@ function SalesCRM() {
             const confirmedTemplateMsg: Message = {
                 ...optimisticMsg,
                 id: String(result.id),
-                metaMessageId: result.meta_message_id,
+                metaMessageId: result.meta_message_id ?? '',
                 status: 'sent' as const,
                 isOptimistic: false,
             };
@@ -1478,7 +1521,18 @@ function SalesCRM() {
             addLog(`ERROR sendMetaTemplate: ${err.message}`);
             setMessages((prev: Message[]) => prev.map((m: Message) => (m.id === tempId ? { ...m, status: 'failed' as const, isOptimistic: false } : m)));
             setSelectedChatMessages((prev) => prev.filter((m) => m.id !== tempId));
-            notify('error', `Error al enviar plantilla: ${err.message}`);
+            let msg = `Error al enviar plantilla: ${err.message}`;
+            if (err.code === 'parameter_count_mismatch') {
+                const expected: string[] = err.detail?.expected || [];
+                msg = expected.length
+                    ? `La plantilla espera ${expected.length} variable${expected.length > 1 ? 's' : ''} (${expected.join(', ')}) y se enviaron ${err.detail?.received ?? '?'}.`
+                    : 'Número de variables incorrecto para esta plantilla.';
+            } else if (err.code === 'media_header_not_supported') {
+                msg = 'Esta plantilla tiene encabezado multimedia y no se puede enviar por API.';
+            } else if (err.code === 'Template not approved') {
+                msg = `La plantilla no está aprobada (estado: ${err.detail?.status || 'desconocido'}).`;
+            }
+            notify('error', msg);
         } finally {
             setSending(false);
         }
@@ -1496,7 +1550,7 @@ function SalesCRM() {
         try {
             // Use the APPROVED meta templates already loaded for the selected number
             // Look for a "reopen" style template: volver_a_contactar, reopen, contactar, etc.
-            const approvedMetaTemplates = templates.filter((t: Template) => t.source === 'meta');
+            const approvedMetaTemplates = templates.filter((t: Template) => t.source === 'meta' && t.sendableViaApi !== false);
             const reopenKeywords = ['volver_a_contactar', 'reopen', 'contactar', 'retomar', 'recontactar'];
             const reopenTemplate = approvedMetaTemplates.find((t: Template) =>
                 reopenKeywords.some(kw => t.name.toLowerCase().includes(kw))
@@ -1737,8 +1791,8 @@ function SalesCRM() {
             // metaMessageId dedup in the display/merge covers the fallback case.
             const confirmedMediaMsg: Message = {
                 ...optimisticMsg,
-                id: String(result.id || result.meta_message_id),
-                metaMessageId: result.meta_message_id,
+                id: String(result.id || result.meta_message_id || tempId),
+                metaMessageId: result.meta_message_id ?? '',
                 status: 'sent',
                 isOptimistic: false,
                 attachments: optimisticMsg.attachments.map(a => ({
@@ -1778,15 +1832,21 @@ function SalesCRM() {
             setMessages((prev: Message[]) =>
                 prev.map((m: Message) => (m.id === messageId ? adaptedMsg : m))
             );
+            setSelectedChatMessages((prev) =>
+                prev.map((m) => (m.id === messageId ? adaptedMsg : m))
+            );
             if (adaptedMsg.mediaUnavailable) {
                 notify('error', 'No se pudo descargar el archivo. Intenta de nuevo más tarde.');
             } else {
                 notify('success', 'Archivo descargado correctamente');
             }
-        } catch (err) {
-            const error = err as Error;
-            addLog(`ERROR retryMedia: ${error.message}`);
-            notify('error', `Error al reintentar descarga: ${error.message}`);
+        } catch (err: any) {
+            addLog(`ERROR retryMedia: ${err.message}`);
+            if (err.status === 410) {
+                notify('error', 'Media no disponible (mensaje anterior a la migración)');
+            } else {
+                notify('error', `Error al reintentar descarga: ${err.message}`);
+            }
         }
     }, [addLog, notify]);
 
@@ -1826,7 +1886,7 @@ function SalesCRM() {
             const confirmedMsg: Message = {
                 ...optimisticMsg,
                 id: String(result.id),
-                metaMessageId: result.meta_message_id,
+                metaMessageId: result.meta_message_id ?? '',
                 status: 'sent',
                 isOptimistic: false,
             };
@@ -1843,7 +1903,16 @@ function SalesCRM() {
             addLog(`ERROR send: ${err.message}`);
             setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, status: 'failed', isOptimistic: false } : m)));
             setSelectedChatMessages((prev) => prev.filter((m) => m.id !== tempId));
-            notify('error', `Error al enviar: ${err.message}`);
+            if (err.code === 'conversation_window_closed') {
+                // Safety net: flag may have expired between render and send.
+                // Close the window in UI → the expired banner + template access appear.
+                conversationActiveLockUntil.current = 0;
+                setConversationWindowActive(false);
+                setWindowStatusLoading(false);
+                notify('error', 'La conversación expiró — envía una plantilla para reabrirla.');
+            } else {
+                notify('error', `Error al enviar: ${err.message}`);
+            }
         } finally {
             setSending(false);
         }

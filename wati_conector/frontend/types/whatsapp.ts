@@ -3,7 +3,9 @@
 export interface WhatsAppNumber {
     id: number;
     phone_number_id: string;
+    /** @deprecated WATI migration — use wati_channel_id */
     waba_id: string | null;
+    wati_channel_id?: string | null;
     display_name: string | null;
     phone_number: string;
     is_active: boolean;
@@ -57,7 +59,7 @@ export interface MessageWithNumber {
     is_voice?: boolean;
     direction: 'inbound' | 'outbound';
     whatsapp_message_id: string | null;
-    meta_message_id?: string;
+    meta_message_id?: string | null;
     status: 'sent' | 'delivered' | 'read' | 'failed' | 'received';
     read_status?: 'read' | 'unread';
     is_read: boolean;

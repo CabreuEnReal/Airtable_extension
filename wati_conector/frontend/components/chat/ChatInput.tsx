@@ -85,6 +85,7 @@ export function ChatInput({ onSend, onSendMedia, onSendMetaTemplate, onSelectAir
         setDraft('');
         
         if (type === 'meta') {
+            if (template.sendableViaApi === false) return;
             // Auto-fill parameters for any template with parameters
             console.log('🔍 Command slash - template:', template.name);
             console.log('🔍 Command slash - contact:', contact);

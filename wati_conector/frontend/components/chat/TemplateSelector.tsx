@@ -29,6 +29,7 @@ export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, on
     }, [templates, search]);
 
     const handleMetaClick = (t: Template) => {
+        if (t.sendableViaApi === false) return;
         const count = t.parameterCount ?? 0;
         
         // Auto-fill parameters for any template with parameters
@@ -76,9 +77,11 @@ export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, on
                     <div className="text-label text-gray-400 mb-1">
                         Esta plantilla requiere {count} parámetro{count > 1 ? 's' : ''}:
                     </div>
-                    {paramValues.map((val, i) => (
+                    {paramValues.map((val, i) => {
+                        const paramLabel = metaParamTemplate.parameterNames?.[i] || `{{${i + 1}}}`;
+                        return (
                         <div key={i} className="flex items-center gap-2">
-                            <span className="text-label text-gray-500 w-12 shrink-0">{`{{${i + 1}}}`}</span>
+                            <span className="text-label text-gray-500 w-20 shrink-0 truncate" title={paramLabel}>{paramLabel}</span>
                             <input
                                 type="text"
                                 value={val}
@@ -87,12 +90,13 @@ export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, on
                                     next[i] = e.target.value;
                                     setParamValues(next);
                                 }}
-                                placeholder={`Valor para {{${i + 1}}}`}
+                                placeholder={`Valor para ${paramLabel}`}
                                 className="flex-1 px-3 py-1.5 text-body border border-gray-200 rounded-lg bg-gray-50 focus:outline-none focus:border-primary focus:bg-white"
                                 autoFocus={i === 0}
                             />
                         </div>
-                    ))}
+                        );
+                    })}
                     <button
                         onClick={handleMetaSend}
                         disabled={paramValues.some((v) => !v.trim())}
@@ -175,16 +179,26 @@ export function TemplateSelector({ templates, onSelectMeta, onSelectAirtable, on
 
 function MetaTemplateRow({ template, onClick }: { template: Template; onClick: () => void }) {
     const params = template.parameterCount ?? 0;
+    const notSendable = template.sendableViaApi === false;
     return (
         <button
             onClick={onClick}
-            className="w-full flex flex-col px-4 py-2.5 text-left hover:bg-[#00811A]/5 active:bg-[#00811A]/10 transition-colors border-b border-gray-50 last:border-0"
+            disabled={notSendable}
+            title={notSendable ? 'Header de media no soportado por API' : undefined}
+            className={`w-full flex flex-col px-4 py-2.5 text-left transition-colors border-b border-gray-50 last:border-0 ${
+                notSendable
+                    ? 'opacity-40 cursor-not-allowed'
+                    : 'hover:bg-[#00811A]/5 active:bg-[#00811A]/10'
+            }`}
         >
             <div className="flex items-center gap-2">
                 <span className="text-sm font-medium text-gray-800">{template.name}</span>
                 <span className="text-[11px] text-[#00811A] font-mono">{template.language}</span>
                 {params > 0 && (
                     <span className="text-[11px] bg-[#00811A]/10 text-[#00811A] px-1.5 py-0.5 rounded-md">{params} var</span>
+                )}
+                {notSendable && (
+                    <span className="text-[11px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-md">📎 no API</span>
                 )}
             </div>
             <div className="flex items-center gap-2 mt-0.5">

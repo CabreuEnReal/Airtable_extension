@@ -201,6 +201,9 @@ export interface Template {
     status?: string;
     components?: unknown;
     parameterCount?: number;
+    parameterNames?: string[];
+    headerType?: string | null;
+    sendableViaApi?: boolean;
     // Legacy Airtable fields (backward compat)
     variables?: string[];
 }

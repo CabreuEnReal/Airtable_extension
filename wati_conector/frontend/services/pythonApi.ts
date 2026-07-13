@@ -80,14 +80,24 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, timeoutMs = 
             // Try to parse backend error JSON for user-friendly messages
             try {
                 const errorJson = JSON.parse(errorText);
-                // FastAPI wraps errors in { detail: { message: "..." } } or { detail: "string" }
+                // FastAPI wraps errors in { detail: { error, message, ... } } or { detail: "string" }
                 const detail = errorJson.detail;
-                if (detail?.message) {
-                    throw new Error(detail.message);
+                if (detail?.message || detail?.error) {
+                    // Preserve the machine-readable code (e.g. conversation_window_closed)
+                    // and the full detail payload so callers can branch on them.
+                    const apiErr: any = new Error(detail.message || detail.error);
+                    apiErr.code = detail.error;
+                    apiErr.status = res.status;
+                    apiErr.detail = detail;
+                    throw apiErr;
                 } else if (typeof detail === 'string') {
-                    throw new Error(detail);
+                    const apiErr: any = new Error(detail);
+                    apiErr.status = res.status;
+                    throw apiErr;
                 } else if (errorJson.message) {
-                    throw new Error(errorJson.message);
+                    const apiErr: any = new Error(errorJson.message);
+                    apiErr.status = res.status;
+                    throw apiErr;
                 }
             } catch (parseErr: any) {
                 // Only re-throw if it's a user-friendly error we threw above, not a JSON parse error
@@ -95,7 +105,9 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, timeoutMs = 
                     throw parseErr;
                 }
             }
-            throw new Error(`API ${res.status}: ${errorText.slice(0, 200)}`);
+            const fallbackErr: any = new Error(`API ${res.status}: ${errorText.slice(0, 200)}`);
+            fallbackErr.status = res.status;
+            throw fallbackErr;
         }
 
         // Check if response is HTML (error page) instead of JSON

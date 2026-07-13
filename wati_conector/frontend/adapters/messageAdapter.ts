@@ -172,8 +172,9 @@ export function adaptMessageWithNumber(raw: MessageWithNumber): Message {
         attachments: buildInboxAttachments(raw),
         isOptimistic: false,
         mediaUnavailable: raw.media_type != null && raw.media_url == null,
-        // Any inbound message means the contact reached out — 24h window is open by definition.
-        conversationActive: raw.direction === 'inbound' ? true : (raw.conversation_active ?? true),
+        // Backend computes conversation_active server-side (24h since last inbound);
+        // trust it as-is. Missing flag → default open (don't block the composer).
+        conversationActive: raw.conversation_active ?? true,
     };
 }
 

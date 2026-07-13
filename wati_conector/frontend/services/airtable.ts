@@ -291,6 +291,20 @@ export async function getPeopleCellphone(peopleId: string): Promise<string> {
     return result;
 }
 
+/**
+ * Resolve the current user's team from their People record (for Pendo).
+ * `Team LR` → linked Teams record id; `Team SS` → team name (multipleSelects).
+ */
+export async function getPeopleTeam(peopleId: string): Promise<{ teamRecordId: string | null; teamSS: string | null }> {
+    const rec = await getRecord(TABLES.PEOPLE, peopleId);
+    const teamLinks = rec.fields[PEOPLE_FIELDS.TEAM_LR];
+    const teamSSRaw = rec.fields[PEOPLE_FIELDS.TEAM_SS];
+    return {
+        teamRecordId: Array.isArray(teamLinks) && teamLinks[0] ? String(teamLinks[0]) : null,
+        teamSS: Array.isArray(teamSSRaw) ? (teamSSRaw[0] ?? null) : (teamSSRaw ? String(teamSSRaw) : null),
+    };
+}
+
 // ─── Generic create (POST a single record) ──────────────────────────────────
 
 async function createRecord(tableName: string, fields: Record<string, unknown>): Promise<AirtableRecord> {

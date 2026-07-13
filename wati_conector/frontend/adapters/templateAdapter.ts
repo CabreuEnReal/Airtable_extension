@@ -17,7 +17,9 @@ export function adaptMetaTemplate(raw: ApiTemplateOut): Template {
         language: (raw as any).language, // Backend returns language for Meta templates
         status: (raw as any).status,
         components: (raw as any).components,
-        parameterCount: (raw as any).parameter_count,
+        parameterCount: raw.parameter_names?.length ?? (raw as any).parameter_count,
+        parameterNames: raw.parameter_names,
+        headerType: raw.header_type ?? null,
         // Airtable-specific fields
         variables: (raw as any).variables,
     };
